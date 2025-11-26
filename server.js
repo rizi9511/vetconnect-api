@@ -39,8 +39,8 @@ app.get('/usuarios/:id', (req, res) => {
     const { password, ...userResponse } = user;
     res.status(200).json(userResponse);
 });
-
-// POST /usuarios -> Criar um novo utilizador
+ 
+// POST /usuarios -> Criar um novo utilizador e gerar um código de verificação
 app.post('/usuarios', async (req, res) => {
     try {
         const { nome, email, password, tipo } = req.body;
@@ -56,24 +56,39 @@ app.post('/usuarios', async (req, res) => {
 
         const hashedPassword = await bcrypt.hash(password, 10);
 
+        // Gera um código de verificação aleatório de 6 dígitos
+        const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+
         const newUser = {
             id: nextUserId++,
             nome,
             email,
             password: hashedPassword,
             tipo,
-            dataRegisto: new Date()
+            dataRegisto: new Date(),
+            // Importante: Na vida real, o utilizador só seria "ativo" após verificação
+            verificado: false, 
+            codigoVerificacao: verificationCode // Guarda o código com o utilizador
         };
         users.push(newUser);
 
-        const { password: _, ...userResponse } = newUser; // Remove a password da resposta
-        res.status(201).json(userResponse);
+        console.log(`✅ Utilizador ${email} criado. Código de verificação: ${verificationCode}`);
+
+        // Remove dados sensíveis da resposta
+        const { password: _, ...userResponse } = newUser; 
+
+        // Devolve o utilizador E o código de verificação
+        res.status(201).json({
+            user: userResponse,
+            message: "Utilizador criado, aguardando verificação."
+        });
 
     } catch (error) {
         console.error('Erro ao criar utilizador:', error);
         res.status(500).json({ error: 'Erro no servidor ao criar utilizador' });
     }
 });
+    
 
 // PUT /usuarios/:id -> Atualizar um utilizador
 app.put('/usuarios/:id', (req, res) => {
@@ -136,6 +151,25 @@ app.get('/', (req, res) => {
         teste_android: 'GET /usuarios'
     });
 });
+
+
+// =======================================================
+// ROTA DE HISTÓRICO (para corresponder ao Android)
+// =======================================================
+
+// Dados em memória para o histórico (simples, para teste)
+let historico = [
+    { id: 1, data: "2024-05-19", descricao: "Consulta de rotina - dados do servidor" },
+    { id: 2, data: "2024-04-10", descricao: "Vacinação anual - dados do servidor" },
+    { id: 3, data: "2024-03-22", descricao: "Análises de sangue - dados do servidor" }
+];
+
+// GET /historico -> Devolve a lista de histórico
+app.get('/historico', (req, res) => {
+    console.log("✅ Pedido GET recebido com sucesso para /historico");
+    res.status(200).json(historico);
+});
+    
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

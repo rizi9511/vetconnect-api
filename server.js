@@ -117,7 +117,8 @@ app.post('/usuarios', async (req, res) => {
 
                     res.status(201).json({
                         user: userResponse,
-                        message: "Utilizador criado, aguardando verificação."
+                        message: "Utilizador criado, aguardando verificação.",
+                        verificationCode: verificationCode
                     });
                 }
             );

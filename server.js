@@ -426,3 +426,17 @@ process.on('SIGINT', () => {
         process.exit(0);
     });
 });
+
+
+app.get('/ver-utilizadores', (req, res) => {
+    const db = new sqlite3.Database('database.sqlite');
+    
+    db.all('SELECT * FROM users', (err, rows) => {
+        if (err) {
+            res.json({ erro: 'Base de dados não disponível' });
+        } else {
+            res.json(rows);
+        }
+        db.close();
+    });
+});

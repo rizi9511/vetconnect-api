@@ -95,81 +95,8 @@ function initDatabase(bdNova = false) {
         }
     });
 
-    // Tabela veterinarios
-    db.run(`
-        CREATE TABLE IF NOT EXISTS veterinarios (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nome TEXT NOT NULL,
-            especialidade TEXT,
-            email TEXT UNIQUE NOT NULL,
-            dataRegisto DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    `, (err) => {
-        if (err) {
-            console.error('❌ Erro ao criar tabela veterinarios:', err);
-        } else {
-            console.log('✅ Tabela veterinarios pronta.');
-        }
-    });
+
 }
-
-// ==============================================
-// DADOS DE EXEMPLO (PARA DEFESA/DEMONSTRAÇÃO)
-// ==============================================
-
-function inserirDadosExemplo() {
-    console.log('➕ Inserindo dados de exemplo...');
-    
-    // Utilizadores de exemplo
-    const usuariosExemplo = [
-        { nome: 'Administrador', email: 'admin@vetconnect.pt', tipo: 'admin' },
-        { nome: 'Maria Silva', email: 'maria@email.com', tipo: 'cliente' },
-        { nome: 'João Santos', email: 'joao@email.com', tipo: 'cliente' }
-    ];
-    
-    const codigoVerificacao = '123456'; // Código fixo para exemplo
-    
-    usuariosExemplo.forEach(user => {
-        db.run(
-            `INSERT OR IGNORE INTO users (nome, email, tipo, verificado, codigoVerificacao) 
-             VALUES (?, ?, ?, ?, ?)`,
-            [user.nome, user.email, user.tipo, 1, codigoVerificacao],
-            function(err) {
-                if (err) {
-                    console.error(`❌ Erro ao inserir ${user.email}:`, err.message);
-                } else {
-                    console.log(`✅ ${user.email} inserido (ID: ${this.lastID})`);
-                }
-            }
-        );
-    });
-    
-    // Veterinários de exemplo
-    const veterinariosExemplo = [
-        { nome: 'Dra. Ana Costa', especialidade: 'Cirurgia', email: 'ana@vet.pt' },
-        { nome: 'Dr. Pedro Martins', especialidade: 'Dermatologia', email: 'pedro@vet.pt' }
-    ];
-    
-    veterinariosExemplo.forEach(vet => {
-        db.run(
-            'INSERT OR IGNORE INTO veterinarios (nome, especialidade, email) VALUES (?, ?, ?)',
-            [vet.nome, vet.especialidade, vet.email],
-            function(err) {
-                if (err) {
-                    console.error(`❌ Erro ao inserir veterinário ${vet.email}:`, err.message);
-                }
-            }
-        );
-    });
-    
-    console.log('✅ Dados de exemplo prontos para demonstração!');
-    console.log('📋 Utilize estes dados para login:');
-    console.log('   - Email: admin@vetconnect.pt');
-    console.log('   - Email: maria@email.com');
-    console.log('   - Email: joao@email.com');
-    console.log('   - Código verificação: 123456 (para todos)');
-}
-
 // ==============================================
 // ROTAS DA API (MANTIDAS COMO ESTAVAM)
 // ==============================================
@@ -455,44 +382,7 @@ app.delete('/usuarios/:id', (req, res) => {
     });
 });
 
-// Rota para adicionar veterinários (exemplo)
-app.post('/veterinarios', (req, res) => {
-    const { nome, especialidade, email } = req.body;
 
-    if (!nome || !email) {
-        return res.status(400).json({ error: 'Nome e email são obrigatórios' });
-    }
-
-    db.run(
-        'INSERT INTO veterinarios (nome, especialidade, email) VALUES (?, ?, ?)',
-        [nome, especialidade, email],
-        function (err) {
-            if (err) {
-                console.error('Erro ao inserir veterinário:', err);
-                return res.status(500).json({ error: 'Erro ao criar veterinário' });
-            }
-
-            res.status(201).json({
-                id: this.lastID,
-                nome,
-                especialidade,
-                email,
-                dataRegisto: new Date()
-            });
-        }
-    );
-});
-
-// GET /veterinarios -> Obter todos os veterinários
-app.get('/veterinarios', (req, res) => {
-    db.all('SELECT * FROM veterinarios', [], (err, rows) => {
-        if (err) {
-            console.error('Erro ao buscar veterinários:', err);
-            return res.status(500).json({ error: 'Erro ao buscar veterinários' });
-        }
-        res.status(200).json(rows);
-    });
-});
 
 // ==============================================
 // ROTAS ADICIONAIS PARA DIAGNÓSTICO
@@ -540,7 +430,6 @@ app.get('/', (req, res) => {
             },
             dados: {
                 usuarios: 'GET /usuarios',
-                veterinarios: 'GET /veterinarios'
             },
             diagnostico: {
                 volume: 'GET /diagnostico/volume',

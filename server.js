@@ -412,33 +412,6 @@ app.get('/ver-utilizadores', (req, res) => {
     });
 });
 
-// Rota principal
-app.get('/', (req, res) => {
-    res.json({
-        message: '🎉 API VetConnect está a funcionar!',
-        status: 'OK',
-        ambiente: isProduction ? 'PRODUÇÃO (Railway)' : 'DESENVOLVIMENTO',
-        bd: DB_PATH,
-        volume: isProduction ? 'Configurado (/app/data)' : 'Local',
-        timestamp: new Date().toISOString(),
-        endpoints: {
-            auth: {
-                criar: 'POST /usuarios',
-                verificar: 'POST /usuarios/verificar',
-                criarPin: 'POST /usuarios/criar-pin',
-                login: 'POST /usuarios/login'
-            },
-            dados: {
-                usuarios: 'GET /usuarios',
-            },
-            diagnostico: {
-                volume: 'GET /diagnostico/volume',
-                debug: 'GET /ver-utilizadores'
-            }
-        }
-    });
-});
-
 // Rota de teste
 app.get('/api/test', (req, res) => {
     res.json({
@@ -458,7 +431,71 @@ app.listen(PORT, () => {
     console.log(`🚀 Servidor VetConnect a correr em http://localhost:${PORT}`);
     console.log(`📁 BD: ${DB_PATH}`);
     console.log(`💾 Volume: ${isProduction ? '/app/data (Railway)' : 'Local'}`);
+
+
+
+    console.log('⚠️  NOTA: Se estiver no Railway Free Tier, o primeiro acesso após inatividade');
+    console.log('    pode demorar 20-30 segundos enquanto o servidor "acorda".');
+    console.log('    Após o primeiro request, fica rápido até nova inatividade.');
+    console.log(`⏰ Timestamp de arranque: ${new Date().toISOString()}`);
+
 });
+
+// ==============================================
+// ROTA DE HEALTH COM INFORMAÇÃO DE PERFORMANCE
+// ==============================================
+
+app.get('/api/health', (req, res) => {
+    const uptime = process.uptime();
+    const isWakingUp = uptime < 30;
+    
+    res.json({
+        status: 'healthy',
+        uptime: Math.round(uptime),
+        performance: isWakingUp ? 'warming_up' : 'optimal',
+        message: isWakingUp 
+            ? 'API está a aquecer (primeiro acesso após inatividade)'
+            : 'API está em velocidade normal',
+        timestamp: new Date().toISOString(),
+        note_for_evaluation: 'Railway Free Tier has cold starts. First request may take 20-30 seconds.'
+    });
+});
+
+
+app.get('/', (req, res) => {
+    const uptime = process.uptime();
+    const isWakingUp = uptime < 30;
+    
+    res.json({
+        message: '🎉 API VetConnect está a funcionar!',
+        status: 'OK',
+        ambiente: isProduction ? 'PRODUÇÃO (Railway)' : 'DESENVOLVIMENTO',
+        bd: DB_PATH,
+        volume: isProduction ? 'Configurado (/app/data)' : 'Local',
+        performance: {
+            uptime: Math.round(uptime),
+            status: isWakingUp ? 'warming_up' : 'running',
+            note: isWakingUp ? 'First request after inactivity may be slow' : 'Optimal performance'
+        },
+        timestamp: new Date().toISOString(),
+        endpoints: {
+            auth: {
+                criar: 'POST /usuarios',
+                verificar: 'POST /usuarios/verificar',
+                criarPin: 'POST /usuarios/criar-pin',
+                login: 'POST /usuarios/login'
+            },
+            dados: {
+                usuarios: 'GET /usuarios',
+            },
+            diagnostico: {
+                volume: 'GET /diagnostico/volume',
+                debug: 'GET /ver-utilizadores'
+            }
+        }
+    });
+});
+
 
 // Fechar a base de dados quando o servidor terminar
 process.on('SIGINT', () => {

@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+const fs = require('fs');  // ADICIONADO
 
 const app = express();
 
@@ -11,19 +12,65 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Inicialização do SQLite
-const dbPath = path.join(__dirname, 'vetconnect.db');
-const db = new sqlite3.Database(dbPath, (err) => {
+// ==============================================
+// CONFIGURAÇÃO DA BD COM VOLUME RAILWAY
+// ==============================================
+
+// 1. DECIDE O CAMINHO DA BD CONFORME O AMBIENTE
+const isProduction = process.env.NODE_ENV === 'production';
+const DB_PATH = isProduction 
+    ? '/app/data/vetconnect.db'  // ✅ VOLUME DO RAILWAY
+    : path.join(__dirname, 'vetconnect.db');  // ✅ LOCAL
+
+console.log(`🚀 Ambiente: ${isProduction ? 'PRODUÇÃO (Railway)' : 'DESENVOLVIMENTO (Local)'}`);
+console.log(`📁 BD caminho: ${DB_PATH}`);
+
+// 2. GARANTE QUE O DIRETÓRIO DO VOLUME EXISTE (APENAS EM PRODUÇÃO)
+if (isProduction && !fs.existsSync('/app/data')) {
+    console.log('📁 Criando diretório /app/data para o Volume...');
+    try {
+        fs.mkdirSync('/app/data', { recursive: true });
+        console.log('✅ Diretório /app/data criado');
+    } catch (err) {
+        console.error('❌ Erro ao criar diretório:', err.message);
+    }
+}
+
+// 3. INICIALIZAÇÃO AUTOMÁTICA DA BD
+function garantirBDExiste() {
+    if (!fs.existsSync(DB_PATH)) {
+        console.log('🆕 Criando nova BD...');
+        // Cria ficheiro vazio
+        fs.writeFileSync(DB_PATH, '');
+        console.log('✅ Ficheiro BD criado');
+        return true; // BD foi criada agora
+    }
+    return false; // BD já existia
+}
+
+// 4. CONECTA À BD
+const db = new sqlite3.Database(DB_PATH, (err) => {
     if (err) {
-        console.error('Erro ao conectar com a base de dados:', err.message);
+        console.error('❌ Erro ao conectar com a base de dados:', err.message);
     } else {
         console.log('✅ Conectado à base de dados SQLite.');
-        initDatabase();
+        
+        // Verifica se a BD é nova (acabou de ser criada)
+        const bdNova = garantirBDExiste();
+        
+        // Inicializa as tabelas (sempre, mas especialmente se for nova)
+        initDatabase(bdNova);
     }
 });
 
-// Inicializar tabelas
-function initDatabase() {
+// ==============================================
+// INICIALIZAÇÃO DAS TABELAS
+// ==============================================
+
+function initDatabase(bdNova = false) {
+    console.log(`🔄 Inicializando tabelas... ${bdNova ? '(BD nova)' : '(BD existente)'}`);
+    
+    // Tabela users
     db.run(`
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -37,12 +84,18 @@ function initDatabase() {
         )
     `, (err) => {
         if (err) {
-            console.error('Erro ao criar tabela users:', err);
+            console.error('❌ Erro ao criar tabela users:', err);
         } else {
             console.log('✅ Tabela users pronta.');
+            
+            // Se a BD é nova, insere dados de exemplo
+            if (bdNova) {
+                inserirDadosExemplo();
+            }
         }
     });
 
+    // Tabela veterinarios
     db.run(`
         CREATE TABLE IF NOT EXISTS veterinarios (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,12 +106,73 @@ function initDatabase() {
         )
     `, (err) => {
         if (err) {
-            console.error('Erro ao criar tabela veterinarios:', err);
+            console.error('❌ Erro ao criar tabela veterinarios:', err);
         } else {
             console.log('✅ Tabela veterinarios pronta.');
         }
     });
 }
+
+// ==============================================
+// DADOS DE EXEMPLO (PARA DEFESA/DEMONSTRAÇÃO)
+// ==============================================
+
+function inserirDadosExemplo() {
+    console.log('➕ Inserindo dados de exemplo...');
+    
+    // Utilizadores de exemplo
+    const usuariosExemplo = [
+        { nome: 'Administrador', email: 'admin@vetconnect.pt', tipo: 'admin' },
+        { nome: 'Maria Silva', email: 'maria@email.com', tipo: 'cliente' },
+        { nome: 'João Santos', email: 'joao@email.com', tipo: 'cliente' }
+    ];
+    
+    const codigoVerificacao = '123456'; // Código fixo para exemplo
+    
+    usuariosExemplo.forEach(user => {
+        db.run(
+            `INSERT OR IGNORE INTO users (nome, email, tipo, verificado, codigoVerificacao) 
+             VALUES (?, ?, ?, ?, ?)`,
+            [user.nome, user.email, user.tipo, 1, codigoVerificacao],
+            function(err) {
+                if (err) {
+                    console.error(`❌ Erro ao inserir ${user.email}:`, err.message);
+                } else {
+                    console.log(`✅ ${user.email} inserido (ID: ${this.lastID})`);
+                }
+            }
+        );
+    });
+    
+    // Veterinários de exemplo
+    const veterinariosExemplo = [
+        { nome: 'Dra. Ana Costa', especialidade: 'Cirurgia', email: 'ana@vet.pt' },
+        { nome: 'Dr. Pedro Martins', especialidade: 'Dermatologia', email: 'pedro@vet.pt' }
+    ];
+    
+    veterinariosExemplo.forEach(vet => {
+        db.run(
+            'INSERT OR IGNORE INTO veterinarios (nome, especialidade, email) VALUES (?, ?, ?)',
+            [vet.nome, vet.especialidade, vet.email],
+            function(err) {
+                if (err) {
+                    console.error(`❌ Erro ao inserir veterinário ${vet.email}:`, err.message);
+                }
+            }
+        );
+    });
+    
+    console.log('✅ Dados de exemplo prontos para demonstração!');
+    console.log('📋 Utilize estes dados para login:');
+    console.log('   - Email: admin@vetconnect.pt');
+    console.log('   - Email: maria@email.com');
+    console.log('   - Email: joao@email.com');
+    console.log('   - Código verificação: 123456 (para todos)');
+}
+
+// ==============================================
+// ROTAS DA API (MANTIDAS COMO ESTAVAM)
+// ==============================================
 
 // ----------------------------------------------------------------
 // ROTAS DE UTILIZADOR
@@ -380,23 +494,58 @@ app.get('/veterinarios', (req, res) => {
     });
 });
 
+// ==============================================
+// ROTAS ADICIONAIS PARA DIAGNÓSTICO
+// ==============================================
+
+// Rota para verificar estado do Volume
+app.get('/diagnostico/volume', (req, res) => {
+    const info = {
+        ambiente: process.env.NODE_ENV || 'development',
+        bdCaminho: DB_PATH,
+        bdExiste: fs.existsSync(DB_PATH),
+        volumeExiste: isProduction ? fs.existsSync('/app/data') : 'N/A (local)',
+        timestamp: new Date().toISOString()
+    };
+    
+    res.json(info);
+});
+
+// Rota para ver utilizadores (para debug)
+app.get('/ver-utilizadores', (req, res) => {
+    db.all('SELECT * FROM users', (err, rows) => {
+        if (err) {
+            res.json({ erro: 'Base de dados não disponível' });
+        } else {
+            res.json(rows);
+        }
+    });
+});
+
 // Rota principal
 app.get('/', (req, res) => {
     res.json({
         message: '🎉 API VetConnect está a funcionar!',
         status: 'OK',
+        ambiente: isProduction ? 'PRODUÇÃO (Railway)' : 'DESENVOLVIMENTO',
+        bd: DB_PATH,
+        volume: isProduction ? 'Configurado (/app/data)' : 'Local',
         timestamp: new Date().toISOString(),
-        database: 'SQLite',
         endpoints: {
             auth: {
-                register: 'POST /api/auth/register',
-                login: 'POST /api/auth/login'
+                criar: 'POST /usuarios',
+                verificar: 'POST /usuarios/verificar',
+                criarPin: 'POST /usuarios/criar-pin',
+                login: 'POST /usuarios/login'
             },
-            public: {
-                veterinarios: 'GET /api/veterinarios',
-                servicos: 'GET /api/servicos'
+            dados: {
+                usuarios: 'GET /usuarios',
+                veterinarios: 'GET /veterinarios'
             },
-            test: 'GET /api/test'
+            diagnostico: {
+                volume: 'GET /diagnostico/volume',
+                debug: 'GET /ver-utilizadores'
+            }
         }
     });
 });
@@ -406,14 +555,20 @@ app.get('/api/test', (req, res) => {
     res.json({
         message: '✅ API VetConnect a funcionar!',
         database: 'SQLite conectada',
+        volume: isProduction ? 'Railway Volume ativo' : 'Modo local',
         timestamp: new Date().toISOString()
     });
 });
 
+// ==============================================
+// INICIALIZAÇÃO DO SERVIDOR
+// ==============================================
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`🚀 Servidor VetConnect a correr em http://localhost:${PORT}`);
+    console.log(`📁 BD: ${DB_PATH}`);
+    console.log(`💾 Volume: ${isProduction ? '/app/data (Railway)' : 'Local'}`);
 });
 
 // Fechar a base de dados quando o servidor terminar
@@ -424,19 +579,5 @@ process.on('SIGINT', () => {
         }
         console.log('✅ Conexão com a base de dados fechada.');
         process.exit(0);
-    });
-});
-
-
-app.get('/ver-utilizadores', (req, res) => {
-    const db = new sqlite3.Database('database.sqlite');
-    
-    db.all('SELECT * FROM users', (err, rows) => {
-        if (err) {
-            res.json({ erro: 'Base de dados não disponível' });
-        } else {
-            res.json(rows);
-        }
-        db.close();
     });
 });

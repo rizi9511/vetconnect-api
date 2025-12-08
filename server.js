@@ -209,7 +209,7 @@ app.post('/usuarios/criar-pin', async (req, res) => {
                     }
 
                     console.log(`✅ PIN criado para o utilizador ${user.email}.`);
-                    res.status(200).json({ message: 'PIN criado com sucesso! Pode agora fazer login.' });
+                    res.status(200).json({ message: 'PIN criado com sucesso!' });
                 }
             );
         });

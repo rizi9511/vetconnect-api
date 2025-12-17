@@ -98,7 +98,7 @@ function initDatabase(bdNova = false) {
 
 }
 // ==============================================
-// ROTAS DA API (MANTIDAS COMO ESTAVAM)
+// ROTAS DA API 
 // ==============================================
 
 // ----------------------------------------------------------------
@@ -421,6 +421,184 @@ app.get('/api/test', (req, res) => {
         timestamp: new Date().toISOString()
     });
 });
+
+// ==============================================
+// ROTAS DE BACKUP/RESTORE (ADICIONAR AQUI)
+// ==============================================
+
+// Rota SECRETA para fazer backup da BD (apenas em produção)
+app.get('/admin/backup', (req, res) => {
+    // Segurança básica - apenas em produção
+    if (!isProduction) {
+        return res.status(403).json({ 
+            error: 'Backup apenas disponível em produção',
+            ambiente: 'development'
+        });
+    }
+    
+    try {
+        // Verifica se a BD existe
+        if (!fs.existsSync(DB_PATH)) {
+            return res.status(404).json({ 
+                error: 'Base de dados não encontrada',
+                caminho: DB_PATH 
+            });
+        }
+        
+        // Lê a BD como buffer
+        const dbBuffer = fs.readFileSync(DB_PATH);
+        const dbBase64 = dbBuffer.toString('base64');
+        const dbSize = dbBuffer.length;
+        
+        // Informações sobre a BD
+        db.get("SELECT COUNT(*) as total FROM users", (err, row) => {
+            const userCount = row ? row.total : 0;
+            
+            res.json({
+                status: 'success',
+                message: 'Backup da base de dados criado com sucesso',
+                database_size: dbSize,
+                database_base64: dbBase64,
+                statistics: {
+                    total_users: userCount,
+                    backup_timestamp: new Date().toISOString(),
+                    environment: 'production'
+                },
+                instructions: 'Guarde o campo "database_base64" para restaurar posteriormente'
+            });
+        });
+        
+    } catch (error) {
+        console.error('❌ Erro ao criar backup:', error);
+        res.status(500).json({ 
+            error: 'Erro ao criar backup',
+            details: error.message 
+        });
+    }
+});
+
+// Rota para restaurar BD (CUIDADO: sobrescreve BD atual!)
+app.post('/admin/restore', (req, res) => {
+    if (!isProduction) {
+        return res.status(403).json({ 
+            error: 'Restore apenas em produção',
+            ambiente: 'development' 
+        });
+    }
+    
+    const { database_base64 } = req.body;
+    
+    if (!database_base64) {
+        return res.status(400).json({ 
+            error: 'Campo "database_base64" é obrigatório' 
+        });
+    }
+    
+    try {
+        // Converte base64 para buffer
+        const dbBuffer = Buffer.from(database_base64, 'base64');
+        
+        // Faz backup da BD atual (se existir)
+        if (fs.existsSync(DB_PATH)) {
+            const backupPath = `${DB_PATH}.backup-${Date.now()}`;
+            fs.copyFileSync(DB_PATH, backupPath);
+            console.log(`📦 Backup da BD atual criado: ${backupPath}`);
+        }
+        
+        // Escreve a nova BD
+        fs.writeFileSync(DB_PATH, dbBuffer);
+        
+        console.log('✅ Base de dados restaurada com sucesso');
+        console.log(`📏 Tamanho: ${dbBuffer.length} bytes`);
+        
+        res.json({
+            status: 'success',
+            message: 'Base de dados restaurada com sucesso',
+            restored_size: dbBuffer.length,
+            timestamp: new Date().toISOString(),
+            warning: 'A BD anterior foi substituída. Reinicie o serviço para carregar os novos dados.'
+        });
+        
+    } catch (error) {
+        console.error('❌ Erro ao restaurar backup:', error);
+        res.status(500).json({ 
+            error: 'Erro ao restaurar backup',
+            details: error.message 
+        });
+    }
+});
+
+// ==============================================
+// MELHORAR FUNÇÃO inserirDadosExemplo()
+// ==============================================
+
+async function inserirDadosExemplo() {
+    console.log('📝 Inserindo dados de exemplo para testes...');
+    
+    try {
+        // Dados REALISTAS para o professor testar
+        const users = [
+            {
+                nome: 'Admin Sistema',
+                email: 'admin@vetconnect.pt',
+                tipo: 'admin',
+                // PIN: 123456
+                pin: await bcrypt.hash('123456', 10),
+                verificado: 1,
+                codigoVerificacao: null
+            },
+            {
+                nome: 'Maria Silva',
+                email: 'maria.cliente@vetconnect.pt', 
+                tipo: 'cliente',
+                // PIN: 654321
+                pin: await bcrypt.hash('654321', 10),
+                verificado: 1,
+                codigoVerificacao: null
+            },
+            {
+                nome: 'Dr. Carlos Santos',
+                email: 'carlos.vet@vetconnect.pt',
+                tipo: 'veterinario',
+                // PIN: 111111
+                pin: await bcrypt.hash('111111', 10),
+                verificado: 1,
+                codigoVerificacao: null
+            },
+            {
+                nome: 'João Pereira',
+                email: 'joao.cliente@vetconnect.pt',
+                tipo: 'cliente',
+                // PIN: 222222
+                pin: await bcrypt.hash('222222', 10),
+                verificado: 0,  // Não verificado
+                codigoVerificacao: '888888'
+            }
+        ];
+        
+        // Insere cada utilizador
+        for (const user of users) {
+            db.run(
+                `INSERT OR IGNORE INTO users (nome, email, tipo, pin, verificado, codigoVerificacao) 
+                 VALUES (?, ?, ?, ?, ?, ?)`,
+                [user.nome, user.email, user.tipo, user.pin, user.verificado, user.codigoVerificacao],
+                function(err) {
+                    if (err) {
+                        console.error(`❌ Erro ao inserir ${user.email}:`, err.message);
+                    } else {
+                        console.log(`✅ ${user.email} inserido (ID: ${this.lastID})`);
+                    }
+                }
+            );
+        }
+        
+        console.log('✅ Dados de exemplo prontos para testes');
+        console.log('📋 Credenciais de teste disponíveis no relatório');
+        
+    } catch (error) {
+        console.error('❌ Erro ao inserir dados de exemplo:', error);
+    }
+}
 
 // ==============================================
 // INICIALIZAÇÃO DO SERVIDOR

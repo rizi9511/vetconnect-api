@@ -87,11 +87,7 @@ function initDatabase(bdNova = false) {
             console.error('❌ Erro ao criar tabela users:', err);
         } else {
             console.log('✅ Tabela users pronta.');
-            
-            // Se a BD é nova, insere dados de exemplo
-            if (bdNova) {
-                inserirDadosExemplo();
-            }
+
         }
     });
 
@@ -528,77 +524,6 @@ app.post('/admin/restore', (req, res) => {
     }
 });
 
-// ==============================================
-// MELHORAR FUNÇÃO inserirDadosExemplo()
-// ==============================================
-
-async function inserirDadosExemplo() {
-    console.log('📝 Inserindo dados de exemplo para testes...');
-    
-    try {
-        // Dados REALISTAS para o professor testar
-        const users = [
-            {
-                nome: 'Admin Sistema',
-                email: 'admin@vetconnect.pt',
-                tipo: 'admin',
-                // PIN: 123456
-                pin: await bcrypt.hash('123456', 10),
-                verificado: 1,
-                codigoVerificacao: null
-            },
-            {
-                nome: 'Maria Silva',
-                email: 'maria.cliente@vetconnect.pt', 
-                tipo: 'cliente',
-                // PIN: 654321
-                pin: await bcrypt.hash('654321', 10),
-                verificado: 1,
-                codigoVerificacao: null
-            },
-            {
-                nome: 'Dr. Carlos Santos',
-                email: 'carlos.vet@vetconnect.pt',
-                tipo: 'veterinario',
-                // PIN: 111111
-                pin: await bcrypt.hash('111111', 10),
-                verificado: 1,
-                codigoVerificacao: null
-            },
-            {
-                nome: 'João Pereira',
-                email: 'joao.cliente@vetconnect.pt',
-                tipo: 'cliente',
-                // PIN: 222222
-                pin: await bcrypt.hash('222222', 10),
-                verificado: 0,  // Não verificado
-                codigoVerificacao: '888888'
-            }
-        ];
-        
-        // Insere cada utilizador
-        for (const user of users) {
-            db.run(
-                `INSERT OR IGNORE INTO users (nome, email, tipo, pin, verificado, codigoVerificacao) 
-                 VALUES (?, ?, ?, ?, ?, ?)`,
-                [user.nome, user.email, user.tipo, user.pin, user.verificado, user.codigoVerificacao],
-                function(err) {
-                    if (err) {
-                        console.error(`❌ Erro ao inserir ${user.email}:`, err.message);
-                    } else {
-                        console.log(`✅ ${user.email} inserido (ID: ${this.lastID})`);
-                    }
-                }
-            );
-        }
-        
-        console.log('✅ Dados de exemplo prontos para testes');
-        console.log('📋 Credenciais de teste disponíveis no relatório');
-        
-    } catch (error) {
-        console.error('❌ Erro ao inserir dados de exemplo:', error);
-    }
-}
 
 // ==============================================
 // INICIALIZAÇÃO DO SERVIDOR

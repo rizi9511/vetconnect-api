@@ -4,7 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
-const fs = require('fs');  // ADICIONADO
+const fs = require('fs');
 
 const app = express();
 
@@ -12,31 +12,19 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ==============================================
-// CONFIGURAÇÃO DA BD COM VOLUME RAILWAY
-// ==============================================
 
-// 1. DECIDE O CAMINHO DA BD CONFORME O AMBIENTE
-const isProduction = process.env.NODE_ENV === 'production';
-const DB_PATH = isProduction 
-    ? '/app/data/vetconnect.db'  // ✅ VOLUME DO RAILWAY
-    : path.join(__dirname, 'vetconnect.db');  // ✅ LOCAL
 
-console.log(`🚀 Ambiente: ${isProduction ? 'PRODUÇÃO (Railway)' : 'DESENVOLVIMENTO (Local)'}`);
-console.log(`📁 BD caminho: ${DB_PATH}`);
+// Configuração da BD para Render==============================================
 
-// 2. GARANTE QUE O DIRETÓRIO DO VOLUME EXISTE (APENAS EM PRODUÇÃO)
-if (isProduction && !fs.existsSync('/app/data')) {
-    console.log('📁 Criando diretório /app/data para o Volume...');
-    try {
-        fs.mkdirSync('/app/data', { recursive: true });
-        console.log('✅ Diretório /app/data criado');
-    } catch (err) {
-        console.error('❌ Erro ao criar diretório:', err.message);
-    }
-}
+// 1. Determinar ambiente
+const isRender = process.env.RENDER === 'true';
+// No Render, sempre caminho local (sistema efémero)
+const DB_PATH = path.join(__dirname, 'vetconnect.db');
 
-// 3. INICIALIZAÇÃO AUTOMÁTICA DA BD
+console.log(`Ambiente: ${isRender ? 'PRODUÇÃO (Render)' : 'DESENVOLVIMENTO/LOCAL'}`);
+console.log(`BD caminho: ${DB_PATH}`);
+
+// 2. INICIALIZAÇÃO AUTOMÁTICA DA BD
 function garantirBDExiste() {
     if (!fs.existsSync(DB_PATH)) {
         console.log('🆕 Criando nova BD...');
@@ -48,16 +36,16 @@ function garantirBDExiste() {
     return false; // BD já existia
 }
 
-// 4. CONECTA À BD
+// 3. CONECTA À BD
 const db = new sqlite3.Database(DB_PATH, (err) => {
     if (err) {
-        console.error('❌ Erro ao conectar com a base de dados:', err.message);
+        console.error('Erro ao conectar com a base de dados:', err.message);
     } else {
-        console.log('✅ Conectado à base de dados SQLite.');
-        
+        console.log('Conectado à base de dados SQLite.');
+
         // Verifica se a BD é nova (acabou de ser criada)
         const bdNova = garantirBDExiste();
-        
+
         // Inicializa as tabelas (sempre, mas especialmente se for nova)
         initDatabase(bdNova);
     }
@@ -68,8 +56,8 @@ const db = new sqlite3.Database(DB_PATH, (err) => {
 // ==============================================
 
 function initDatabase(bdNova = false) {
-    console.log(`🔄 Inicializando tabelas... ${bdNova ? '(BD nova)' : '(BD existente)'}`);
-    
+    console.log(`Inicializando tabelas... ${bdNova ? '(BD nova)' : '(BD existente)'}`);
+
     // Tabela users
     db.run(`
         CREATE TABLE IF NOT EXISTS users (
@@ -84,22 +72,19 @@ function initDatabase(bdNova = false) {
         )
     `, (err) => {
         if (err) {
-            console.error('❌ Erro ao criar tabela users:', err);
+            console.error('Erro ao criar tabela users:', err);
         } else {
-            console.log('✅ Tabela users pronta.');
+            console.log('Tabela users pronta.');
 
         }
     });
 
 
 }
-// ==============================================
-// ROTAS DA API 
-// ==============================================
 
-// ----------------------------------------------------------------
-// ROTAS DE UTILIZADOR
-// ----------------------------------------------------------------
+
+
+// Rotas de utilizador==============================================
 
 // POST /usuarios -> Criar um novo utilizador e gerar um código de verificação
 app.post('/usuarios', async (req, res) => {
@@ -141,7 +126,7 @@ app.post('/usuarios', async (req, res) => {
                         return res.status(500).json({ error: 'Erro ao criar utilizador' });
                     }
 
-                    console.log(`✅ Utilizador ${email} criado. Código: ${verificationCode}`);
+                    console.log(`Utilizador ${email} criado. Código: ${verificationCode}`);
 
                     const userResponse = {
                         id: this.lastID,
@@ -245,7 +230,7 @@ app.post('/usuarios/criar-pin', async (req, res) => {
                         return res.status(500).json({ message: 'Erro interno do servidor' });
                     }
 
-                    console.log(`✅ PIN criado para o utilizador ${user.email}.`);
+                    console.log(`PIN criado para o utilizador ${user.email}.`);
                     res.status(200).json({ message: 'PIN criado com sucesso!' });
                 }
             );
@@ -289,7 +274,7 @@ app.post('/usuarios/login', async (req, res) => {
                 email: user.email,
                 tipo: user.tipo
             };
-            
+
             res.status(200).json({
                 message: 'Login bem-sucedido!',
                 token: token,
@@ -380,32 +365,16 @@ app.delete('/usuarios/:id', (req, res) => {
 
 
 
-// ==============================================
-// ROTAS ADICIONAIS PARA DIAGNÓSTICO
-// ==============================================
+// Rotas de diagnóstico==============================================
 
-// Rota para verificar estado do Volume
-app.get('/diagnostico/volume', (req, res) => {
+app.get('/diagnostico/bd', (req, res) => {
     const info = {
-        ambiente: process.env.NODE_ENV || 'development',
+        ambiente: isRender ? 'Render' : 'Local',
         bdCaminho: DB_PATH,
         bdExiste: fs.existsSync(DB_PATH),
-        volumeExiste: isProduction ? fs.existsSync('/app/data') : 'N/A (local)',
         timestamp: new Date().toISOString()
     };
-    
     res.json(info);
-});
-
-// Rota para ver utilizadores (para debug)
-app.get('/ver-utilizadores', (req, res) => {
-    db.all('SELECT * FROM users', (err, rows) => {
-        if (err) {
-            res.json({ erro: 'Base de dados não disponível' });
-        } else {
-            res.json(rows);
-        }
-    });
 });
 
 // Rota de teste
@@ -413,43 +382,43 @@ app.get('/api/test', (req, res) => {
     res.json({
         message: '✅ API VetConnect a funcionar!',
         database: 'SQLite conectada',
-        volume: isProduction ? 'Railway Volume ativo' : 'Modo local',
+        hosting: isRender ? 'Render' : 'Local',
         timestamp: new Date().toISOString()
     });
 });
 
-// ==============================================
-// ROTAS DE BACKUP/RESTORE (ADICIONAR AQUI)
-// ==============================================
+
+
+// Rotas de backup/restore==============================================
 
 // Rota SECRETA para fazer backup da BD (apenas em produção)
 app.get('/admin/backup', (req, res) => {
     // Segurança básica - apenas em produção
-    if (!isProduction) {
-        return res.status(403).json({ 
+    if (!isRender) {
+        return res.status(403).json({
             error: 'Backup apenas disponível em produção',
             ambiente: 'development'
         });
     }
-    
+
     try {
         // Verifica se a BD existe
         if (!fs.existsSync(DB_PATH)) {
-            return res.status(404).json({ 
+            return res.status(404).json({
                 error: 'Base de dados não encontrada',
-                caminho: DB_PATH 
+                caminho: DB_PATH
             });
         }
-        
+
         // Lê a BD como buffer
         const dbBuffer = fs.readFileSync(DB_PATH);
         const dbBase64 = dbBuffer.toString('base64');
         const dbSize = dbBuffer.length;
-        
+
         // Informações sobre a BD
         db.get("SELECT COUNT(*) as total FROM users", (err, row) => {
             const userCount = row ? row.total : 0;
-            
+
             res.json({
                 status: 'success',
                 message: 'Backup da base de dados criado com sucesso',
@@ -463,50 +432,50 @@ app.get('/admin/backup', (req, res) => {
                 instructions: 'Guarde o campo "database_base64" para restaurar posteriormente'
             });
         });
-        
+
     } catch (error) {
-        console.error('❌ Erro ao criar backup:', error);
-        res.status(500).json({ 
+        console.error('Erro ao criar backup:', error);
+        res.status(500).json({
             error: 'Erro ao criar backup',
-            details: error.message 
+            details: error.message
         });
     }
 });
 
 // Rota para restaurar BD (CUIDADO: sobrescreve BD atual!)
 app.post('/admin/restore', (req, res) => {
-    if (!isProduction) {
-        return res.status(403).json({ 
+    if (!isRender) {
+        return res.status(403).json({
             error: 'Restore apenas em produção',
-            ambiente: 'development' 
+            ambiente: 'development'
         });
     }
-    
+
     const { database_base64 } = req.body;
-    
+
     if (!database_base64) {
-        return res.status(400).json({ 
-            error: 'Campo "database_base64" é obrigatório' 
+        return res.status(400).json({
+            error: 'Campo "database_base64" é obrigatório'
         });
     }
-    
+
     try {
         // Converte base64 para buffer
         const dbBuffer = Buffer.from(database_base64, 'base64');
-        
+
         // Faz backup da BD atual (se existir)
         if (fs.existsSync(DB_PATH)) {
             const backupPath = `${DB_PATH}.backup-${Date.now()}`;
             fs.copyFileSync(DB_PATH, backupPath);
-            console.log(`📦 Backup da BD atual criado: ${backupPath}`);
+            console.log(`Backup da BD atual criado: ${backupPath}`);
         }
-        
+
         // Escreve a nova BD
         fs.writeFileSync(DB_PATH, dbBuffer);
-        
-        console.log('✅ Base de dados restaurada com sucesso');
-        console.log(`📏 Tamanho: ${dbBuffer.length} bytes`);
-        
+
+        console.log('Base de dados restaurada com sucesso');
+        console.log(`Tamanho: ${dbBuffer.length} bytes`);
+
         res.json({
             status: 'success',
             message: 'Base de dados restaurada com sucesso',
@@ -514,73 +483,58 @@ app.post('/admin/restore', (req, res) => {
             timestamp: new Date().toISOString(),
             warning: 'A BD anterior foi substituída. Reinicie o serviço para carregar os novos dados.'
         });
-        
+
     } catch (error) {
-        console.error('❌ Erro ao restaurar backup:', error);
-        res.status(500).json({ 
+        console.error('Erro ao restaurar backup:', error);
+        res.status(500).json({
             error: 'Erro ao restaurar backup',
-            details: error.message 
+            details: error.message
         });
     }
 });
 
 
-// ==============================================
-// INICIALIZAÇÃO DO SERVIDOR
-// ==============================================
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`🚀 Servidor VetConnect a correr em http://localhost:${PORT}`);
-    console.log(`📁 BD: ${DB_PATH}`);
-    console.log(`💾 Volume: ${isProduction ? '/app/data (Railway)' : 'Local'}`);
-
-
-
-    console.log('⚠️  NOTA: Se estiver no Railway Free Tier, o primeiro acesso após inatividade');
-    console.log('    pode demorar 20-30 segundos enquanto o servidor "acorda".');
-    console.log('    Após o primeiro request, fica rápido até nova inatividade.');
-    console.log(`⏰ Timestamp de arranque: ${new Date().toISOString()}`);
-
-});
-
-// ==============================================
-// ROTA DE HEALTH COM INFORMAÇÃO DE PERFORMANCE
-// ==============================================
-
+//Rotas de health==============================================
 app.get('/api/health', (req, res) => {
     const uptime = process.uptime();
     const isWakingUp = uptime < 30;
-    
+
     res.json({
         status: 'healthy',
         uptime: Math.round(uptime),
         performance: isWakingUp ? 'warming_up' : 'optimal',
-        message: isWakingUp 
+        message: isWakingUp
             ? 'API está a aquecer (primeiro acesso após inatividade)'
             : 'API está em velocidade normal',
         timestamp: new Date().toISOString(),
-        note_for_evaluation: 'Railway Free Tier has cold starts. First request may take 20-30 seconds.'
+        note_for_evaluation: 'Render Free Tier has cold starts. First request may take 20-50 seconds.'
     });
 });
 
 
+// Fechar a base de dados quando o servidor terminar
+process.on('SIGINT', () => {
+    db.close((err) => {
+        if (err) {
+            console.error(err.message);
+        }
+        console.log('Conexão com a base de dados fechada.');
+        process.exit(0);
+    });
+});
+
+
+
+// Rota principal==============================================
+
 app.get('/', (req, res) => {
-    const uptime = process.uptime();
-    const isWakingUp = uptime < 30;
-    
     res.json({
-        message: '🎉 API VetConnect está a funcionar!',
+        message: 'API VetConnect está a funcionar!',
         status: 'OK',
-        ambiente: isProduction ? 'PRODUÇÃO (Railway)' : 'DESENVOLVIMENTO',
+        ambiente: isRender ? 'PRODUÇÃO (Render)' : 'DESENVOLVIMENTO',
         bd: DB_PATH,
-        volume: isProduction ? 'Configurado (/app/data)' : 'Local',
-        performance: {
-            uptime: Math.round(uptime),
-            status: isWakingUp ? 'warming_up' : 'running',
-            note: isWakingUp ? 'First request after inactivity may be slow' : 'Optimal performance'
-        },
-        timestamp: new Date().toISOString(),
+        hosting: isRender ? 'Render (sistema efémero)' : 'Local',
         endpoints: {
             auth: {
                 criar: 'POST /usuarios',
@@ -592,13 +546,30 @@ app.get('/', (req, res) => {
                 usuarios: 'GET /usuarios',
             },
             diagnostico: {
-                volume: 'GET /diagnostico/volume',
-                debug: 'GET /ver-utilizadores'
+                bd: 'GET /diagnostico/bd',
+            },
+            backup: {
+                backup: 'GET /admin/backup (apenas produção)',
+                restore: 'POST /admin/restore (apenas produção)'
             }
-        }
+        },
+        timestamp: new Date().toISOString()
     });
 });
 
+
+
+// Inicialização do servidor==============================================
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`Servidor VetConnect a correr em http://localhost:${PORT}`);
+    console.log(`BD: ${DB_PATH}`);
+    console.log(`Hospedagem: ${isRender ? 'Render' : 'Local'}`);
+    console.log('NOTA: Se estiver no Render Free Tier, o primeiro acesso após inatividade');
+    console.log('pode demorar 20-50 segundos enquanto o servidor "acorda".');
+    console.log(`Timestamp de arranque: ${new Date().toISOString()}`);
+});
 
 // Fechar a base de dados quando o servidor terminar
 process.on('SIGINT', () => {
@@ -606,7 +577,7 @@ process.on('SIGINT', () => {
         if (err) {
             console.error(err.message);
         }
-        console.log('✅ Conexão com a base de dados fechada.');
+        console.log('Conexão com a base de dados fechada.');
         process.exit(0);
     });
 });

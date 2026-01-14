@@ -3,7 +3,6 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
-const path = require('path');
 
 const app = express();
 
@@ -341,7 +340,7 @@ app.get('/diagnostico/bd', async (req, res) => {
 });
 
 // Rota de teste
-app.get('/api/test', async (req, res) => {
+app.get('/api/test', async (req, res) => { 
     try {
         await pool.query('SELECT 1');
         res.json({
@@ -360,9 +359,9 @@ app.get('/api/test', async (req, res) => {
 
 
 
-// Rotas de health==============================================
+// Rotas de health - verificar se a API está a funcionar corretamente==============================================
 
-app.get('/api/health', async (req, res) => {
+app.get('/api/health', async (req, res) => { 
     const uptime = process.uptime();
     const isWakingUp = uptime < 30;
 

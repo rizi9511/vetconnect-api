@@ -1,2 +1,2 @@
-# vetconnect-api
-API para o app VetConnect
+# VetConnect-api
+API para a app VetConnect

@@ -3,65 +3,213 @@ const cors = require('cors'); //Middleware para permitir CORS
 const bcrypt = require('bcryptjs'); //Biblioteca para hashing de passwords/PINs
 const jwt = require('jsonwebtoken'); //Biblioteca para criação e verificação de JSON Web Tokens
 const { Pool } = require('pg'); //Cliente PostgreSQL para Node.js
-
+const multer = require('multer'); // Middleware para manipulação de multipart/form-data (uploads)
+require('dotenv').config(); //Carregar variáveis de ambiente de um ficheiro .env
 const app = express(); //Criar aplicação Express
 
 // Middleware
 app.use(cors()); // Permitir requisições de diferentes origens (CORS)
 app.use(express.json()); // Converte JSON do corpo das requisições para objetos JavaScript
 
+// configuração PostgreSQL para Render==============================================
 
-
-// Configuração PostgreSQL para Render==============================================
-
-// Verificar se está a correr no Render
+// verifica se está a correr no Render
 const isRender = process.env.RENDER === 'true';
 
-// Criar pool de conexões com PostgreSQL
+// cria pool de conexões com PostgreSQL
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL, // URL da BD das variáveis de ambiente do Render
     ssl: isRender ? { rejectUnauthorized: false } : false // SSL só no Render
 });
 
-// Testar conexão e inicializar BD
+
+
+// inicialização da BD==============================================
+
+// testa conexão e inicializa BD
 async function initDatabase() {
     try {
-        // Testar conexão
+        // testa conexão
         await pool.query('SELECT NOW()');
         console.log('Conectado à base de dados PostgreSQL');
 
-        // Criar tabela se não existir
+        // cria tabelas se não existir
         await pool.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,  
-        nome TEXT NOT NULL,
-        email TEXT UNIQUE NOT NULL,
-        telemovel TEXT NOT NULL,
-        tipo TEXT NOT NULL,
-        dataRegisto TIMESTAMP DEFAULT CURRENT_TIMESTAMP,  
-        verificado BOOLEAN DEFAULT false, 
-        codigoVerificacao TEXT,
-        pin TEXT
-      )
-    `);
-        // Contar utilizadores na BD
-        const result = await pool.query('SELECT COUNT(*) FROM users');
-        console.log(`Total de utilizadores na BD: ${result.rows[0].count}`);
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,  
+                nome TEXT NOT NULL,
+                email TEXT UNIQUE NOT NULL,
+                telemovel TEXT NOT NULL,
+                tipo TEXT NOT NULL,
+                dataRegisto TIMESTAMP DEFAULT CURRENT_TIMESTAMP,  
+                verificado BOOLEAN DEFAULT false, 
+                codigoVerificacao TEXT,
+                pin TEXT
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS clinicas (
+                id SERIAL PRIMARY KEY,
+                nome TEXT NOT NULL
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS veterinarios (
+                id SERIAL PRIMARY KEY,
+                nome TEXT NOT NULL,
+                clinicaId INTEGER REFERENCES clinicas(id) ON DELETE CASCADE -- se a clinica for apagada os veterinários tambem são
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS consultas (
+                id SERIAL PRIMARY KEY,
+                userId INTEGER REFERENCES users(id) ON DELETE CASCADE, -- se o user for apagado as consultas também são
+                animalId INTEGER, 
+                clinicaId INTEGER REFERENCES clinicas(id),
+                veterinarioId INTEGER REFERENCES veterinarios(id),
+                data DATE NOT NULL,
+                hora TIME NOT NULL,
+                motivo TEXT,
+                estado TEXT DEFAULT 'marcada',  -- marcada (default), realizada, cancelada
+                dataMarcacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS animais (
+                id SERIAL PRIMARY KEY,
+                tutorId INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                nome TEXT NOT NULL,
+                especie TEXT,
+                raca TEXT,
+                dataNascimento DATE,
+                fotoUrl TEXT,
+                numeroChip TEXT,
+                codigoUnico TEXT UNIQUE,
+                dataRegisto TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS receitas (
+                id SERIAL PRIMARY KEY,
+                animalId INTEGER NOT NULL REFERENCES animais(id) ON DELETE CASCADE,
+                dataPrescricao DATE NOT NULL,
+                medicamento TEXT NOT NULL,
+                dosagem TEXT,
+                frequencia TEXT,
+                duracao TEXT,
+                veterinario TEXT,
+                observacoes TEXT,
+                dataRegisto TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS vacinas (
+                id SERIAL PRIMARY KEY,
+                animalId INTEGER NOT NULL REFERENCES animais(id) ON DELETE CASCADE,
+                tipo TEXT NOT NULL,
+                dataAplicacao DATE NOT NULL,
+                dataProxima DATE,
+                veterinario TEXT,
+                lote TEXT,
+                observacoes TEXT,
+                dataRegisto TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS exames (
+                id SERIAL PRIMARY KEY,
+                animalId INTEGER NOT NULL REFERENCES animais(id) ON DELETE CASCADE,
+                tipo TEXT NOT NULL,
+                dataExame DATE NOT NULL,
+                resultado TEXT,
+                laboratorio TEXT,
+                veterinario TEXT,
+                ficheiroUrl TEXT,
+                observacoes TEXT,
+                dataRegisto TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // insere dados exemplo
+        await seedDatabase();
+        console.log('Todas as tabelas criadas/verificadas');
 
     } catch (err) {
         console.error('Erro ao inicializar a base de dados:', err.message);
-        console.error('Verificar a conexão com a base de dados');
     }
 }
 
-// Inicializar BD quando o servidor começa
-initDatabase();
+// função para inserir dados de exemplo
+async function seedDatabase() {
+    try {
+
+        // verifica se já existem clínicas para não inserir dados duplicados
+        const clinicasExistentes = await pool.query('SELECT COUNT(*) FROM clinicas'); // conta clínicas existentes
+        if (parseInt(clinicasExistentes.rows[0].count) === 0) { // converte para inteiro e verifica se é 0
+            console.log('Base de dados de consultas vazia. A inserir dados de exemplo...');
+
+            // insere clínicas
+            const clinicasResult = await pool.query(`
+                INSERT INTO clinicas (nome) VALUES 
+                ('Animal Clinic'), 
+                ('Bichomix - Hospital Veterinário'), 
+                ('Hospital Veterinário de Lisboa'),
+                ('Centro Veterinário de Tomar'),
+                ('VetLuz'),
+                ('Hospital Veterinário de Alfragide')
+                RETURNING id -- retorna os IDs das clínicas inseridas
+            `);
+
+            // insere veterinários
+            await pool.query(`
+                INSERT INTO veterinarios (nome, clinicaId) VALUES
+                ('Dr. João Silva', 1),    
+                ('Dra. Ana Costa', 1),    
+                ('Dr. Rui Pedro', 2),     
+                ('Dra. Sofia Marques', 2),
+                ('Dr. Carlos Mendes', 3),
+                ('Dra. Beatriz Reis', 3),
+                ('Dr. Miguel Santos', 4),
+                ('Dra. Inês Oliveira', 4),
+                ('Dr. Tiago Fernandes', 5),
+                ('Dra. Catarina Rodrigues', 5),
+                ('Dr. Pedro Almeida', 6),
+                ('Dra. Mariana Sousa', 6)
+            `);
+
+            console.log('Dados de exemplo inseridos');
+        }
+    } catch (err) {
+        console.error('Erro ao inserir dados exemplo:', err);
+    }
+}
 
 
 
-// Rotas de utilizador==============================================
+// middleware de autenticação==============================================
 
-// POST /usuarios -> Criar um novo utilizador
+function authenticateToken(req, res, next) {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (!token) {
+        return res.status(401).json({ error: 'Token de autenticação necessário' });
+    }
+
+    jwt.verify(token, process.env.JWT_SECRET || 'dev_secret', (err, user) => {
+        if (err) {
+            return res.status(403).json({ error: 'Token inválido ou expirado' });
+        }
+        req.user = user;
+        next();
+    });
+}
+
+
+
+// rotas de utilizador==============================================
+
+// POST /usuarios -> cria um novo utilizador
 app.post('/usuarios', async (req, res) => {
     try {
         const { nome, email, telemovel, tipo } = req.body;
@@ -141,7 +289,7 @@ app.post('/usuarios', async (req, res) => {
 });
 
 
-// Rota para verificar o código
+// rota para verificar o código
 app.post('/usuarios/verificar', async (req, res) => {
     try {
         const { email, codigoVerificacao } = req.body;
@@ -186,7 +334,7 @@ app.post('/usuarios/verificar', async (req, res) => {
 });
 
 
-// Rota para criar o PIN
+// rota para criar o PIN
 app.post('/usuarios/criar-pin', async (req, res) => {
     try {
         const { email, pin } = req.body;
@@ -230,7 +378,7 @@ app.post('/usuarios/criar-pin', async (req, res) => {
     }
 });
 
-// Rota de Login
+// rota de Login
 app.post('/usuarios/login', async (req, res) => {
     try {
         const { email, pin } = req.body;
@@ -286,10 +434,9 @@ app.post('/usuarios/login', async (req, res) => {
     }
 });
 
-
 // CRUD de utilizadores
 
-// GET /usuarios -> Obter todos os utilizadores
+// GET /usuarios -> obter todos os utilizadores
 app.get('/usuarios', async (req, res) => {
     try {
         const result = await pool.query(
@@ -302,7 +449,7 @@ app.get('/usuarios', async (req, res) => {
     }
 });
 
-// GET /usuarios/:id -> Obter um utilizador específico
+// GET /usuarios/:id -> obter um utilizador específico
 app.get('/usuarios/:id', async (req, res) => {
     try {
         const { id } = req.params; // Obter ID dos parâmetros da rota
@@ -322,7 +469,7 @@ app.get('/usuarios/:id', async (req, res) => {
     }
 });
 
-// PUT /usuarios/:id -> Atualizar um utilizador
+// PUT /usuarios/:id -> atualizar um utilizador
 app.put('/usuarios/:id', async (req, res) => {
     try {
         const { id } = req.params; // Obter ID dos parâmetros da rota
@@ -344,7 +491,7 @@ app.put('/usuarios/:id', async (req, res) => {
     }
 });
 
-// DELETE /usuarios/:id -> Eliminar um utilizador
+// DELETE /usuarios/:id -> eliminar um utilizador
 app.delete('/usuarios/:id', async (req, res) => {
     try {
         const { id } = req.params; // Obter ID dos parâmetros da rota
@@ -366,90 +513,316 @@ app.delete('/usuarios/:id', async (req, res) => {
 
 
 
-// Rota para Marcar Consulta==============================================
+// rotas de animais==============================================
 
-async function setupConsultaTables() {
+// POST /animais -> cria novo animal
+app.post('/animais', authenticateToken, async (req, res) => {
     try {
-        // cria as tabelas se não existirem (clinicas, veterinarios e consultas)
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS clinicas (
-                id SERIAL PRIMARY KEY,
-                nome TEXT NOT NULL
-            )
-        `);
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS veterinarios (
-                id SERIAL PRIMARY KEY,
-                nome TEXT NOT NULL,
-                clinicaId INTEGER REFERENCES clinicas(id) ON DELETE CASCADE -- se a clinica for apagada os veterinários tambem são
-            )
-        `);
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS consultas (
-                id SERIAL PRIMARY KEY,
-                userId INTEGER REFERENCES users(id) ON DELETE CASCADE, -- se o user for apagado as consultas também são
-                animalId INTEGER, 
-                clinicaId INTEGER REFERENCES clinicas(id),
-                veterinarioId INTEGER REFERENCES veterinarios(id),
-                data DATE NOT NULL,
-                hora TIME NOT NULL,
-                motivo TEXT,
-                estado TEXT DEFAULT 'marcada',  -- marcada (default), realizada, cancelada
-                dataMarcacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        `);
+        const { nome, especie, raca, dataNascimento, numeroChip } = req.body;
+        const tutorId = req.user.id;
 
-        // verifica se já existem clínicas para não inserir dados duplicados
-        const clinicasExistentes = await pool.query('SELECT COUNT(*) FROM clinicas'); // conta clínicas existentes
-        if (parseInt(clinicasExistentes.rows[0].count) === 0) { // converte para inteiro e verifica se é 0
-            console.log('Base de dados de consultas vazia. A inserir dados de exemplo...');
-
-            // inserir clínicas de exemplo
-            await pool.query(`
-                INSERT INTO clinicas (nome) VALUES 
-                ('Animal Clinic'), 
-                ('Bichomix - Hospital Veterinário'), 
-                ('Hospital Veterinário de Lisboa'),
-                ('Centro Veterinário de Tomar'),
-                ('VetLuz'),
-                ('Hospital Veterinário de Alfragide')
-            `);
-
-            // insere veterinários de exemplo ligados às clínicas pelo ID
-            await pool.query(`
-                INSERT INTO veterinarios (nome, clinicaId) VALUES
-                ('Dr. João Silva', 1),    
-                ('Dra. Ana Costa', 1),    
-                ('Dr. Rui Pedro', 2),     
-                ('Dra. Sofia Marques', 2),
-                ('Dr. Carlos Mendes', 3),
-                ('Dra. Beatriz Reis', 3),
-                ('Dr. Miguel Santos', 4),
-                ('Dra. Inês Oliveira', 4),
-                ('Dr. Tiago Fernandes', 5),
-                ('Dra. Catarina Rodrigues', 5),
-                ('Dr. Pedro Almeida', 6),
-                ('Dra. Mariana Sousa', 6)
-            `);
-            console.log('Dados de exemplo para consultas inseridos com sucesso.');
+        if (!nome || !especie) {
+            return res.status(400).json({ error: 'Nome e espécie são obrigatórios' });
         }
 
-    } catch (err) {
-        console.error('Erro ao configurar tabelas de consulta:', err.message);
-    }
-}
+        // Gerar código único VT-XXXXXX
+        const codigoUnico = 'VT-' + Math.floor(100000 + Math.random() * 900000);
 
-// inicialização das tabelas
-initDatabase()
-    .then(() => {
-        return setupConsultaTables();
-    })
-    .then(() => {
-        console.log('Todas as tabelas inicializadas com sucesso.');
-    })
-    .catch(err => {
-        console.error('Erro na inicialização:', err);
-    });
+        const result = await pool.query(
+            `INSERT INTO animais 
+             (tutorId, nome, especie, raca, dataNascimento, numeroChip, codigoUnico)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             RETURNING *`,
+            [tutorId, nome, especie, raca, dataNascimento, numeroChip, codigoUnico]
+        );
+
+        res.status(201).json(result.rows[0]);
+
+    } catch (error) {
+        console.error('Erro ao criar animal:', error);
+        res.status(500).json({ error: 'Erro no servidor' });
+    }
+});
+
+// GET /usuarios/:userId/animais -> obtem animais de um tutor
+app.get('/usuarios/:userId/animais', authenticateToken, async (req, res) => {
+    try {
+        const { userId } = req.params;
+
+        // Verificar se o usuário tem permissão
+        if (parseInt(userId) !== req.user.id && req.user.tipo !== 'veterinario') {
+            return res.status(403).json({ error: 'Não autorizado' });
+        }
+
+        const result = await pool.query(
+            `SELECT * FROM animais 
+             WHERE tutorId = $1 
+             ORDER BY nome`,
+            [userId]
+        );
+
+        res.status(200).json(result.rows);
+
+    } catch (error) {
+        console.error('Erro ao obter animais:', error);
+        res.status(500).json({ error: 'Erro no servidor' });
+    }
+});
+
+// GET /animais/:animalId -> obtem detalhes de um animal
+app.get('/animais/:animalId', authenticateToken, async (req, res) => {
+    try {
+        const { animalId } = req.params;
+
+        const result = await pool.query(
+            `SELECT a.*, u.nome as tutorNome, u.email as tutorEmail
+             FROM animais a
+             JOIN users u ON a.tutorId = u.id
+             WHERE a.id = $1`,
+            [animalId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Animal não encontrado' });
+        }
+
+        // Verificar permissões
+        const animal = result.rows[0];
+        if (animal.tutorid !== req.user.id && req.user.tipo !== 'veterinario') {
+            return res.status(403).json({ error: 'Não autorizado' });
+        }
+
+        res.status(200).json(animal);
+
+    } catch (error) {
+        console.error('Erro ao obter animal:', error);
+        res.status(500).json({ error: 'Erro no servidor' });
+    }
+});
+
+// POST /animais/:animalId/foto -> upload de foto do animal
+app.post('/animais/:animalId/foto', authenticateToken, async (req, res) => {
+    try {
+        const { animalId } = req.params;
+        const { fotoUrl } = req.body;  // ← Recebe apenas a URL do Android
+
+        if (!fotoUrl) {
+            return res.status(400).json({ error: 'URL da foto é obrigatória' });
+        }
+
+        // Verificar se o animal pertence ao usuário
+        const animalCheck = await pool.query(
+            'SELECT tutorId FROM animais WHERE id = $1',
+            [animalId]
+        );
+
+        if (animalCheck.rows.length === 0) {
+            return res.status(404).json({ error: 'Animal não encontrado' });
+        }
+
+        if (animalCheck.rows[0].tutorid !== req.user.id) {
+            return res.status(403).json({ error: 'Não autorizado' });
+        }
+
+        // Apenas guarda a URL na BD (Android já fez upload para outro serviço)
+        await pool.query(
+            'UPDATE animais SET fotoUrl = $1 WHERE id = $2',
+            [fotoUrl, animalId]
+        );
+
+        res.status(200).json({
+            message: 'Foto atualizada com sucesso',
+            fotoUrl: fotoUrl
+        });
+
+    } catch (error) {
+        console.error('Erro ao atualizar foto:', error);
+        res.status(500).json({ error: 'Erro no servidor' });
+    }
+});
+
+
+
+// rotas de documentos==============================================
+
+// POST /documentos -> cria documento (receita, vacina ou exame)
+app.post('/documentos', authenticateToken, async (req, res) => {
+    try {
+        const { tipo, animalId, dados } = req.body;
+
+        if (!tipo || !animalId || !dados) {
+            return res.status(400).json({ error: 'Tipo, animalId e dados são obrigatórios' });
+        }
+
+        let result;
+        switch (tipo) {
+            case 'receita':
+                result = await pool.query(
+                    `INSERT INTO receitas 
+                     (animalId, dataPrescricao, medicamento, dosagem, frequencia, duracao, veterinario, observacoes)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                     RETURNING *`,
+                    [animalId, dados.dataPrescricao, dados.medicamento, dados.dosagem,
+                        dados.frequencia, dados.duracao, dados.veterinario, dados.observacoes]
+                );
+                break;
+
+            case 'vacina':
+                result = await pool.query(
+                    `INSERT INTO vacinas 
+                     (animalId, tipo, dataAplicacao, dataProxima, veterinario, lote, observacoes)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7)
+                     RETURNING *`,
+                    [animalId, dados.tipo, dados.dataAplicacao, dados.dataProxima,
+                        dados.veterinario, dados.lote, dados.observacoes]
+                );
+                break;
+
+            case 'exame':
+                result = await pool.query(
+                    `INSERT INTO exames 
+                     (animalId, tipo, dataExame, resultado, laboratorio, veterinario, ficheiroUrl, observacoes)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                     RETURNING *`,
+                    [animalId, dados.tipo, dados.dataExame, dados.resultado,
+                        dados.laboratorio, dados.veterinario, dados.ficheiroUrl, dados.observacoes]
+                );
+                break;
+
+            default:
+                return res.status(400).json({ error: 'Tipo de documento inválido' });
+        }
+
+        res.status(201).json({
+            message: 'Documento criado com sucesso',
+            documento: result.rows[0],
+            tipo: tipo
+        });
+
+    } catch (error) {
+        console.error('Erro ao criar documento:', error);
+        res.status(500).json({ error: 'Erro no servidor' });
+    }
+});
+
+// GET /animais/:animalId/documentos -> obtem todos os documentos de um animal
+app.get('/animais/:animalId/documentos', authenticateToken, async (req, res) => {
+    try {
+        const { animalId } = req.params;
+
+        // Verificar permissões
+        const animalCheck = await pool.query(
+            'SELECT tutorId FROM animais WHERE id = $1',
+            [animalId]
+        );
+
+        if (animalCheck.rows.length === 0) {
+            return res.status(404).json({ error: 'Animal não encontrado' });
+        }
+
+        if (animalCheck.rows[0].tutorid !== req.user.id && req.user.tipo !== 'veterinario') {
+            return res.status(403).json({ error: 'Não autorizado' });
+        }
+
+        // Buscar todos os documentos
+        const [receitas, vacinas, exames] = await Promise.all([
+            pool.query('SELECT * FROM receitas WHERE animalId = $1 ORDER BY dataPrescricao DESC', [animalId]),
+            pool.query('SELECT * FROM vacinas WHERE animalId = $1 ORDER BY dataAplicacao DESC', [animalId]),
+            pool.query('SELECT * FROM exames WHERE animalId = $1 ORDER BY dataExame DESC', [animalId])
+        ]);
+
+        res.status(200).json({
+            receitas: receitas.rows,
+            vacinas: vacinas.rows,
+            exames: exames.rows
+        });
+
+    } catch (error) {
+        console.error('Erro ao obter documentos:', error);
+        res.status(500).json({ error: 'Erro no servidor' });
+    }
+});
+
+
+
+// rotas de consultas==============================================
+
+// POST /consultas -> marca nova consulta
+app.post('/consultas', authenticateToken, async (req, res) => {
+    try {
+        const { animalId, clinicaId, veterinarioId, data, hora, motivo } = req.body; // obtem dados do corpo da requisição
+        const userId = req.user.id; // obtem o ID do utilizador autenticado
+
+        // verifica se já existe uma consulta marcada para o mesmo veterinário na mesma data e hora
+        const consultaConflito = await pool.query(
+            `SELECT * FROM consultas 
+                WHERE veterinarioId = $1 
+                AND data = $2 
+                AND hora = $3 
+                AND estado != 'cancelada'`, // não conta consultas canceladas
+            [veterinarioId, data, hora]
+        );
+
+        // se existir conflito, retorna erro
+        if (consultaConflito.rows.length > 0) {
+            return res.status(409).json({
+                error: 'Já existe uma consulta marcada para este veterinário no mesmo horário'
+            });
+        }
+
+        // validação dos campos obrigatórios
+        if (!animalId || !clinicaId || !veterinarioId || !data || !hora) {
+            return res.status(400).json({
+                error: 'Todos os campos são obrigatórios'
+            });
+        }
+
+        const dataConsulta = new Date(data); // converte a data para objeto Date
+        const hoje = new Date(); // data atual
+        hoje.setHours(0, 0, 0, 0); // zera horas para comparar só a data
+        // verifica se a data da consulta não é no passado
+        if (dataConsulta < hoje) {
+            return res.status(400).json({
+                error: 'A data da consulta não pode ser no passado'
+            });
+        }
+
+        // verifica se o veterinário pertence à clínica selecionada
+        const verificaVeterinario = await pool.query(
+            'SELECT * FROM veterinarios WHERE id = $1 AND clinicaId = $2',
+            [veterinarioId, clinicaId]
+        );
+        if (verificaVeterinario.rows.length === 0) {
+            return res.status(400).json({
+                error: 'Este veterinário não pertence à clínica selecionada'
+            });
+        }
+
+        // verifica se o animal pertence ao utilizador
+        const animalCheck = await pool.query(
+            'SELECT tutorId FROM animais WHERE id = $1',
+            [animalId]
+        );
+
+        if (animalCheck.rows.length === 0 || animalCheck.rows[0].tutorid !== userId) {
+            return res.status(403).json({ error: 'Animal não encontrado ou não autorizado' });
+        }
+
+        // insere a nova consulta na BD
+        const result = await pool.query(
+            `INSERT INTO consultas
+            (userId, animalId, clinicaId, veterinarioId, data, hora, motivo)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            RETURNING *`,
+            [userId, animalId, clinicaId, veterinarioId, data, hora, motivo]
+        );
+
+        res.status(201).json(result.rows[0]);
+    } catch (error) {
+        console.error('Erro ao marcar consulta:', error);
+        res.status(500).json({ error: 'Erro no servidor' });
+    }
+});
 
 // GET /clinicas -> obtem todas as clínicas
 app.get('/clinicas', async (req, res) => {
@@ -488,74 +861,9 @@ app.get('/clinicas/:clinicaId/veterinarios', async (req, res) => {
     }
 });
 
-// POST /consultas -> marcar nova consulta
-app.post('/consultas', async (req, res) => {
-    try {
-        const { userId, animalId, clinicaId, veterinarioId, data, hora, motivo } = req.body;
-
-        // verifica se já existe uma consulta marcada para o mesmo veterinário na mesma data e hora
-        const consultaConflito = await pool.query(
-            `SELECT * FROM consultas 
-                WHERE veterinarioId = $1 
-                AND data = $2 
-                AND hora = $3 
-                AND estado != 'cancelada'`, // não conta consultas canceladas
-            [veterinarioId, data, hora]
-        );
-
-        // se existir conflito, retorna erro
-        if (consultaConflito.rows.length > 0) {
-            return res.status(409).json({
-                error: 'Já existe uma consulta marcada para este veterinário no mesmo horário'
-            });
-        }
-
-        // validação dos campos obrigatórios
-        if (!userId || !clinicaId || !veterinarioId || !data || !hora) {
-            return res.status(400).json({
-                error: 'Todos os campos são obrigatórios'
-            });
-        }
-
-        const dataConsulta = new Date(data); // converte a data para objeto Date
-        const hoje = new Date(); // data atual
-        hoje.setHours(0, 0, 0, 0); // zera horas para comparar só a data
-        // verifica se a data da consulta não é no passado
-        if (dataConsulta < hoje) {
-            return res.status(400).json({
-                error: 'A data da consulta não pode ser no passado'
-            });
-        }
-
-        // verifica se o veterinário pertence à clínica selecionada
-        const verificaVeterinario = await pool.query(
-            'SELECT * FROM veterinarios WHERE id = $1 AND clinicaId = $2',
-            [veterinarioId, clinicaId]
-        );
-        if (verificaVeterinario.rows.length === 0) {
-            return res.status(400).json({
-                error: 'Este veterinário não pertence à clínica selecionada'
-            });
-        }
-
-        // insere a nova consulta na BD
-        const result = await pool.query(
-            `INSERT INTO consultas
-            (userId, animalId, clinicaId, veterinarioId, data, hora, motivo)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            RETURNING *`,
-            [userId, animalId, clinicaId, veterinarioId, data, hora, motivo]
-        );
-
-        res.status(201).json(result.rows[0]);
-    } catch (error) {
-        console.error('Erro ao marcar consulta:', error);
-        res.status(500).json({ error: 'Erro no servidor' });
-    }
-});
 
 // GET /consultas/:userId -> consultas de um utilizador
-app.get('/consultas/user/:userId', async (req, res) => {
+app.get('/consultas/user/:userId', authenticateToken, async (req, res) => {
     try {
         const { userId } = req.params; // obtem o ID do utilizador dos parâmetros da rota
         const result = await pool.query(`
@@ -574,8 +882,8 @@ app.get('/consultas/user/:userId', async (req, res) => {
     }
 });
 
-// DELETE /consultas/:id -> cancelar uma consulta
-app.delete('/consultas/:id', async (req, res) => {
+// DELETE /consultas/:id -> cancela uma consulta
+app.delete('/consultas/:id', authenticateToken, async (req, res) => {
     try {
         const { id } = req.params; // obtem o ID da consulta dos parâmetros da rota
         const result = await pool.query(
@@ -598,26 +906,16 @@ app.delete('/consultas/:id', async (req, res) => {
     }
 });
 
-
-
-// Rota principal e diagnóstico==============================================
+// rota principal==============================================
 
 app.get('/', async (req, res) => {
     try {
-        // testa BD primeiro
-        await pool.query('SELECT 1');
 
-        // conta users
-        const dbResult = await pool.query('SELECT COUNT(*) as total FROM users'); 
-        const totalUsers = parseInt(dbResult.rows[0].total);
-
-        // conta clinicas
-        const clinicasResult = await pool.query('SELECT COUNT(*) as total FROM clinicas');
-        const consultasResult = await pool.query('SELECT COUNT(*) as total FROM consultas');
-
-        // conta consultas
-        const totalClinicas = parseInt(clinicasResult.rows[0].total);
-        const totalConsultas = parseInt(consultasResult.rows[0].total);
+        const [usersCount, animaisCount, consultasCount] = await Promise.all([
+            pool.query('SELECT COUNT(*) FROM users'),
+            pool.query('SELECT COUNT(*) FROM animais'),
+            pool.query('SELECT COUNT(*) FROM consultas')
+        ]);
 
         res.json({
             // status da API
@@ -627,9 +925,14 @@ app.get('/', async (req, res) => {
             // informação do sistema
             ambiente: isRender ? 'PRODUÇÃO (Render + PostgreSQL)' : 'DESENVOLVIMENTO',
             database: 'PostgreSQL conectada',
-            total_utilizadores: totalUsers,
 
-            // Endpoints disponíveis
+            stats: {
+                utilizadores: parseInt(usersCount.rows[0].count),
+                animais: parseInt(animaisCount.rows[0].count),
+                consultas: parseInt(consultasCount.rows[0].count)
+            },
+
+            // endpoints disponíveis
             endpoints: {
                 auth: {
                     criar: 'POST /usuarios',
@@ -650,8 +953,19 @@ app.get('/', async (req, res) => {
                     marcar_consulta: 'POST /consultas',
                     consultas_utilizador: 'GET /consultas/user/:userId',
                     cancelar_consulta: 'DELETE /consultas/:id'
+                },
+                animais: {
+                    animais: 'POST /animais',
+                    animais_utilizador: 'GET /usuarios/:userId/animais',
+                    animal_id: 'GET /animais/:animalId',
+                    upload_foto: 'POST /animais/:animalId/foto'
+                },
+                documentos: {
+                    criar_documento: 'POST /documentos',
+                    documentos_animal: 'GET /animais/:animalId/documentos'
                 }
             },
+
             timestamp: new Date().toISOString()
         });
 
@@ -662,22 +976,36 @@ app.get('/', async (req, res) => {
             message: 'API funciona mas base de dados pode estar offline',
             error: error.message,
             timestamp: new Date().toISOString(),
-            suggestion: 'Verificar a conexão com a base de dados'
         });
     }
 });
 
 
 
-// Inicialização do servidor==============================================
+// inicialização do servidor==============================================
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`Servidor VetConnect na porta ${PORT}`);
-    console.log(`Database: PostgreSQL ${isRender ? '(Render)' : '(Local)'}`);
-    console.log(`Iniciado: ${new Date().toISOString()}`);
-});
 
-// Cleanup do servidor==============================================
+async function startServer() {
+    try {
+        await initDatabase();
+
+        app.listen(PORT, () => {
+            console.log(`Servidor na porta ${PORT}`);
+            console.log(`PostgreSQL: ${isRender ? 'Render' : 'Local'}`);
+            console.log(`Iniciado: ${new Date().toISOString()}`);
+        });
+
+    } catch (error) {
+        console.error('Falha ao iniciar servidor:', error);
+        process.exit(1);
+    }
+}
+
+startServer();
+
+
+
+// cleanup do servidor==============================================
 async function cleanup() {
     console.log('A limpar recursos');
     try {

@@ -1,15 +1,17 @@
-const express = require('express'); //Framework web para Node.js
-const cors = require('cors'); //Middleware para permitir CORS
-const bcrypt = require('bcryptjs'); //Biblioteca para hashing de passwords/PINs
-const jwt = require('jsonwebtoken'); //Biblioteca para criação e verificação de JSON Web Tokens
-const { Pool } = require('pg'); //Cliente PostgreSQL para Node.js
-const multer = require('multer'); // Middleware para manipulação de multipart/form-data (uploads)
-require('dotenv').config(); //Carregar variáveis de ambiente de um ficheiro .env
-const app = express(); //Criar aplicação Express
+const express = require('express'); // framework web para Node.js
+const cors = require('cors'); // middleware para permitir CORS
+const bcrypt = require('bcryptjs'); // biblioteca para hashing de passwords/PINs
+const jwt = require('jsonwebtoken'); // biblioteca para criação e verificação de JSON Web Tokens
+const { Pool } = require('pg'); // cliente PostgreSQL para Node.js
+const multer = require('multer'); // middleware para manipulação de multipart/form-data (uploads)
+require('dotenv').config(); // carrega variáveis de ambiente de um ficheiro .env
+const app = express(); // cria aplicação Express
 
-// Middleware
-app.use(cors()); // Permitir requisições de diferentes origens (CORS)
-app.use(express.json()); // Converte JSON do corpo das requisições para objetos JavaScript
+// middleware
+app.use(cors()); // permite requisições de diferentes origens (CORS)
+app.use(express.json()); // converte JSON do corpo das requisições para objetos JavaScript
+
+
 
 // configuração PostgreSQL para Render==============================================
 
@@ -214,12 +216,12 @@ app.post('/usuarios', async (req, res) => {
     try {
         const { nome, email, telemovel, tipo } = req.body;
 
-        // Validar campos obrigatórios
+        // Valida campos obrigatórios
         if (!nome || !email || !telemovel || !tipo) {
             return res.status(400).json({ error: 'Todos os campos são obrigatórios' });
         }
 
-        // validar o número de telemóvel 
+        // valida o número de telemóvel 
         const telemovelRegex = /^\+?[0-9]{9,15}$/; // Exemplo: +351912345678 ou 912345678
         if (!telemovelRegex.test(telemovel)) {
             return res.status(400).json({
@@ -233,7 +235,7 @@ app.post('/usuarios', async (req, res) => {
             [email]
         );
 
-        // Se existir, retornar erro
+        // se existir, retornar erro
         if (existingUser.rows.length > 0) {
             return res.status(400).json({ error: 'Utilizador com este email já existe' });
         }
@@ -244,7 +246,7 @@ app.post('/usuarios', async (req, res) => {
             [telemovel]
         );
 
-        // Se existir, retornar erro
+        // se existir, retorna erro
         if (existingPhone.rows.length > 0) {
             return res.status(400).json({
                 error: 'Utilizador com este telemóvel já existe'
@@ -261,10 +263,10 @@ app.post('/usuarios', async (req, res) => {
             [nome, email, telemovel, tipo, false, verificationCode] // false - não verificado inicialmente
         );
 
-        // Na consola mostra o código de verificação que funciona como um SMS simulado
+        // na consola mostra o código de verificação que funciona como um SMS simulado
         console.log(`Utilizador ${nome} criado. Código: ${verificationCode}`);
 
-        // Responder com os dados do utilizador (sem o código de verificação)
+        // responde com os dados do utilizador
         const userResponse = {
             id: result.rows[0].id,
             nome,
@@ -275,7 +277,7 @@ app.post('/usuarios', async (req, res) => {
             verificado: false
         };
 
-        // Retorna resposta
+        // retorna resposta
         res.status(201).json({
             user: userResponse,
             message: "Utilizador criado - a aguardar verificação",
@@ -298,32 +300,32 @@ app.post('/usuarios/verificar', async (req, res) => {
             return res.status(400).json({ message: 'Email e código são obrigatórios' });
         }
 
-        // Procurar utilziador pelo email
+        // procura utilziador pelo email
         const result = await pool.query(
             'SELECT * FROM users WHERE email = $1',
             [email]
         );
 
-        // Se não encontrar, retorna erro
+        // se não encontrar, retorna erro
         if (result.rows.length === 0) {
             return res.status(404).json({ message: 'Utilizador não encontrado' });
         }
 
-        // Identifica o user
+        // identifica o user
         const user = result.rows[0];
 
-        // Compara o código inserido com o armazenado
+        // compara o código inserido com o armazenado
         if (user.codigoverificacao !== codigoVerificacao) {
             return res.status(400).json({ message: 'Código de verificação inválido' });
         }
 
-        // Atualiza o utilizador para verificado e remove o código
+        // atualiza o utilizador para verificado e remove o código
         await pool.query(
             'UPDATE users SET codigoVerificacao = NULL, verificado = true WHERE email = $1',
             [email]
         );
 
-        // Resposta de sucesso
+        // resposta de sucesso
         console.log(`Utilizador ${user.nome} verificado com sucesso.`);
         res.status(200).json({ message: 'Verificação bem-sucedida' });
 
@@ -346,13 +348,13 @@ app.post('/usuarios/criar-pin', async (req, res) => {
             return res.status(400).json({ message: 'O PIN deve ter 6 dígitos' });
         }
 
-        // Procurar utilizador pelo email
+        // procura utilizador pelo email
         const result = await pool.query(
             'SELECT * FROM users WHERE email = $1',
             [email]
         );
 
-        // Se não encontrar, retorna erro
+        // se não encontrar, retorna erro
         if (result.rows.length === 0) {
             return res.status(404).json({ message: 'Utilizador não encontrado' });
         }
@@ -363,7 +365,7 @@ app.post('/usuarios/criar-pin', async (req, res) => {
         const salt = await bcrypt.genSalt(10); // Gerar salt
         const hashedPin = await bcrypt.hash(String(pin), salt); // Hash do PIN
 
-        // Atualizar o PIN do utilizador na BD
+        // atualiza o PIN do utilizador na BD
         await pool.query(
             'UPDATE users SET pin = $1 WHERE email = $2',
             [hashedPin, email]
@@ -387,13 +389,13 @@ app.post('/usuarios/login', async (req, res) => {
             return res.status(400).json({ message: 'Email e PIN são obrigatórios' });
         }
 
-        // Procurar utilizador pelo email
+        // procura utilizador pelo email
         const result = await pool.query(
             'SELECT * FROM users WHERE email = $1',
             [email]
         );
 
-        // Se não encontrar ou não tiver PIN, retorna erro
+        // se não encontrar ou não tiver PIN, retorna erro
         if (result.rows.length === 0 || !result.rows[0].pin) {
             return res.status(401).json({ message: 'Email ou PIN incorretos' });
         }

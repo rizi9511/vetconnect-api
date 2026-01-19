@@ -5,11 +5,60 @@ const jwt = require('jsonwebtoken'); // biblioteca para criação e verificaçã
 const { Pool } = require('pg'); // cliente PostgreSQL para Node.js
 require('dotenv').config(); // carrega variáveis de ambiente de um ficheiro .env
 const app = express(); // cria aplicação Express
+const multer = require('multer'); // middleware para upload de ficheiros
+const path = require('path'); // módulo para manipulação de caminhos de ficheiros
+const fs = require('fs'); // módulo para manipulação do sistema de ficheiros
 
 // middleware
 app.use(cors()); // permite requisições de diferentes origens (CORS)
 app.use(express.json()); // converte JSON do corpo das requisições para objetos JavaScript
 
+
+
+// configuração multer para uploads==============================================
+// configura onde guardar as imagens
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) { 
+        // pasta onde as imagens serão guardadas
+        const uploadPath = './uploads';
+
+        // cria pasta se não existir
+        if (!fs.existsSync(uploadPath)) {
+            fs.mkdirSync(uploadPath, { recursive: true }); // cria pasta recursivamente
+        }
+
+        cb(null, uploadPath); // define o destino
+    },
+    filename: function (req, file, cb) {
+        // nome único para evitar conflitos
+        const uniqueName = Date.now() + '-' + Math.random().toString(36).substring(7) + path.extname(file.originalname); // ex: 1623434873-abc1234.jpg
+        cb(null, uniqueName); // define o nome do ficheiro
+    }
+});
+
+// configura o middleware de upload
+const upload = multer({
+    storage: storage, // onde guardar os ficheiros
+    limits: { // limites de upload
+        fileSize: 5 * 1024 * 1024, // limite de 5MB
+    },
+    fileFilter: function (req, file, cb) { // filtro para tipos de ficheiros
+        // aceita apenas imagens
+        const allowedTypes = /jpeg|jpg|png|gif/; // tipos permitidos
+        const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase()); // verifica extensão
+        const mimetype = allowedTypes.test(file.mimetype); // verifica mimetype - tipo real do ficheiro
+
+        // se for imagem, aceita
+        if (mimetype && extname) {
+            cb(null, true);
+        } else {
+            cb(new Error('Apenas imagens são permitidas (JPEG, JPG, PNG, GIF)'));
+        }
+    }
+});
+
+// serve ficheiros estáticos 
+app.use('/uploads', express.static('./uploads'));
 
 
 // configuração PostgreSQL para Render==============================================
@@ -602,45 +651,92 @@ app.get('/animais/:animalId', authenticateToken, async (req, res) => {
 });
 
 // POST /animais/:animalId/foto -> upload de foto do animal
-app.post('/animais/:animalId/foto', authenticateToken, async (req, res) => {
-    try {
-        const { animalId } = req.params;
-        const { fotoUrl } = req.body;  // ← Recebe apenas a URL do Android
+app.post('/animais/:animalId/foto', authenticateToken, upload.single('foto'),  // 'foto' é o nome do campo que o Android vai enviar
+    async (req, res) => {
+        try {
+            const { animalId } = req.params; // obtem o ID do animal dos parâmetros da rota
 
-        if (!fotoUrl) {
-            return res.status(400).json({ error: 'URL da foto é obrigatória' });
+            // verifica se recebeu um ficheiro
+            if (!req.file) {
+                return res.status(400).json({
+                    error: 'Nenhuma imagem enviada',
+                    details: 'Por favor, envie uma imagem no campo "foto"'
+                });
+            }
+
+            // verifica se o animal existe
+            const animalCheck = await pool.query(
+                'SELECT tutorId, nome FROM animais WHERE id = $1', // obtem tutorId para verificar permissões
+                [animalId]
+            );
+
+            if (animalCheck.rows.length === 0) {
+                // se animal não existe, apaga a imagem que foi enviada
+                fs.unlinkSync(req.file.path);
+                return res.status(404).json({
+                    error: 'Animal não encontrado',
+                    animalId: animalId
+                });
+            }
+
+            // obtem dados do animal
+            const animal = animalCheck.rows[0];
+
+            // verifica permissões (tutor ou veterinário)
+            if (animal.tutorid !== req.user.id && req.user.tipo !== 'veterinario') {
+                // se não tem permissão, apaga a imagem
+                fs.unlinkSync(req.file.path);
+                return res.status(403).json({
+                    error: 'Não autorizado',
+                    details: 'Apenas o tutor pode atualizar esta foto'
+                });
+            }
+
+            // obtem URL base (Render ou local)
+            const baseUrl = process.env.RENDER_EXTERNAL_URL || `http://${req.get('host')}`;
+            const fotoUrl = `${baseUrl}/uploads/${req.file.filename}`;
+
+            // atualiza a foto do animal na BD
+            await pool.query(
+                'UPDATE animais SET fotoUrl = $1 WHERE id = $2', // atualiza fotoUrl
+                [fotoUrl, animalId] 
+            );
+
+            // log da atualização
+            console.log(`Foto atualizada para animal ${animal.nome} (ID: ${animalId}): ${fotoUrl}`);
+
+            // responde com sucesso
+            res.status(200).json({
+                success: true,
+                message: 'Foto atualizada com sucesso',
+                fotoUrl: fotoUrl,
+                filename: req.file.filename,
+                animal: {
+                    id: animalId,
+                    nome: animal.nome
+                }
+            });
+
+        // em caso de erro
+        } catch (error) { 
+            console.error('Erro ao atualizar foto:', error);
+            //tenta apagar o ficheiro
+            if (req.file && req.file.path && fs.existsSync(req.file.path)) {
+                try {
+                    fs.unlinkSync(req.file.path); // apaga ficheiro
+                // se der erro ao apagar
+                } catch (unlinkError) { 
+                    console.error('Erro ao apagar ficheiro:', unlinkError);
+                }
+            }
+
+            res.status(500).json({
+                error: 'Erro no servidor',
+                details: error.message
+            });
         }
-
-        // Verificar se o animal pertence ao usuário
-        const animalCheck = await pool.query(
-            'SELECT tutorId FROM animais WHERE id = $1',
-            [animalId]
-        );
-
-        if (animalCheck.rows.length === 0) {
-            return res.status(404).json({ error: 'Animal não encontrado' });
-        }
-
-        if (animalCheck.rows[0].tutorid !== req.user.id) {
-            return res.status(403).json({ error: 'Não autorizado' });
-        }
-
-        // Apenas guarda a URL na BD (Android já fez upload para outro serviço)
-        await pool.query(
-            'UPDATE animais SET fotoUrl = $1 WHERE id = $2',
-            [fotoUrl, animalId]
-        );
-
-        res.status(200).json({
-            message: 'Foto atualizada com sucesso',
-            fotoUrl: fotoUrl
-        });
-
-    } catch (error) {
-        console.error('Erro ao atualizar foto:', error);
-        res.status(500).json({ error: 'Erro no servidor' });
     }
-});
+);
 
 
 

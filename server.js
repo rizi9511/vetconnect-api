@@ -3,7 +3,6 @@ const cors = require('cors'); // middleware para permitir CORS
 const bcrypt = require('bcryptjs'); // biblioteca para hashing de passwords/PINs
 const jwt = require('jsonwebtoken'); // biblioteca para criação e verificação de JSON Web Tokens
 const { Pool } = require('pg'); // cliente PostgreSQL para Node.js
-const multer = require('multer'); // middleware para manipulação de multipart/form-data (uploads)
 require('dotenv').config(); // carrega variáveis de ambiente de um ficheiro .env
 const app = express(); // cria aplicação Express
 

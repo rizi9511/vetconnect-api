@@ -83,10 +83,6 @@ async function initDatabase() {
         await pool.query('SELECT NOW()');
         console.log('Conectado à base de dados PostgreSQL');
 
-        // força recriação da tabela
-        await pool.query('DROP TABLE IF EXISTS users CASCADE');
-        console.log('Tabela users apagada, será recriada...');
-
         // cria tabelas se não existir
         await pool.query(`
                 CREATE TABLE IF NOT EXISTS users (

@@ -86,15 +86,20 @@ async function initDatabase() {
         // cria tabelas se não existir
         await pool.query(`
                 CREATE TABLE IF NOT EXISTS users (
-                    id SERIAL PRIMARY KEY,  
+                    id SERIAL PRIMARY KEY,
                     nome TEXT NOT NULL,
                     email TEXT UNIQUE NOT NULL,
-                    telemovel TEXT NOT NULL,
+                    telemovel TEXT,
                     tipo TEXT NOT NULL,
-                    dataRegisto TIMESTAMP DEFAULT CURRENT_TIMESTAMP,  
-                    verificado BOOLEAN DEFAULT false, 
+                    dataRegisto TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    verificado BOOLEAN DEFAULT false,
                     codigoVerificacao TEXT,
-                    pin TEXT
+                    pin TEXT,
+                    nacionalidade TEXT,
+                    sexo TEXT,
+                    cc TEXT,
+                    dataNascimento DATE,
+                    morada TEXT
                 )
             `);
         await pool.query(`
@@ -560,7 +565,7 @@ app.get('/usuarios/:id', async (req, res) => {
     try {
         const { id } = req.params; // Obter ID dos parâmetros da rota
         const result = await pool.query(
-            'SELECT id, nome, email, tipo, dataRegisto, verificado FROM users WHERE id = $1', // Excluir campos sensíveis
+            'SELECT id, nome, email, telemovel, tipo, dataRegisto, verificado, nacionalidade, sexo, cc, dataNascimento, morada FROM users WHERE id = $1',
             [id]
         );
 
@@ -1883,15 +1888,15 @@ async function cleanupExpiredTokens() {
         const countResult = await pool.query(
             'SELECT COUNT(*) as count FROM invalidated_tokens WHERE expires_at < NOW()'
         );
-        
+
         const countToDelete = parseInt(countResult.rows[0].count);
-        
+
         if (countToDelete > 0) {
             // apaga os registos
             await pool.query(
                 'DELETE FROM invalidated_tokens WHERE expires_at < NOW()'
             );
-            
+
             console.log(`Limpeza automática: ${countToDelete} tokens expirados removidos da blacklist`);
         }
     } catch (err) {

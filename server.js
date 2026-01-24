@@ -751,7 +751,7 @@ app.post('/usuarios/alterar-pin', authenticateToken, async (req, res) => {
             });
         }
 
-        // Buscar utilizador e o seu PIN atual (hash)
+        // procura utilizador e o seu PIN atual (hash)
         const result = await pool.query(
             'SELECT id, nome, pin FROM users WHERE id = $1',
             [userId]
@@ -1086,21 +1086,23 @@ app.get('/animais/:animalId/documentos', authenticateToken, async (req, res) => 
     try {
         const { animalId } = req.params;
 
-        // Verificar permissões
+        // verifica permissões
         const animalCheck = await pool.query(
             'SELECT tutorId FROM animais WHERE id = $1',
             [animalId]
         );
 
+        // se animal não existe
         if (animalCheck.rows.length === 0) {
             return res.status(404).json({ error: 'Animal não encontrado' });
         }
 
+        // verifica se o user é o tutor ou veterinário
         if (animalCheck.rows[0].tutorid !== req.user.id && req.user.tipo !== 'veterinario') {
             return res.status(403).json({ error: 'Não autorizado' });
         }
 
-        // Buscar todos os documentos
+        // procura todos os documentos
         const [receitas, vacinas, exames] = await Promise.all([
             pool.query('SELECT * FROM receitas WHERE animalId = $1 ORDER BY dataPrescricao DESC', [animalId]),
             pool.query('SELECT * FROM vacinas WHERE animalId = $1 ORDER BY dataAplicacao DESC', [animalId]),
@@ -1122,10 +1124,10 @@ app.get('/animais/:animalId/documentos', authenticateToken, async (req, res) => 
 // DELETE /documentos/:tipo/:id -> apaga um documento específico
 app.delete('/documentos/:tipo/:id', authenticateToken, async (req, res) => {
     try {
-        const { tipo, id } = req.params;
-        const userId = req.user.id;
+        const { tipo, id } = req.params; // obtem tipo e id dos parâmetros da rota
+        const userId = req.user.id; // obtem o ID do utilizador autenticado
 
-        // Validar tipo
+        // valida tipo
         let tableName;
         switch (tipo) {
             case 'receitas': tableName = 'receitas'; break;
@@ -1138,15 +1140,16 @@ app.delete('/documentos/:tipo/:id', authenticateToken, async (req, res) => {
                 });
         }
 
-        // Primeiro, verificar se o documento existe e se o user tem permissão
+        // verifica se o documento existe e se o user tem permissão
         const docQuery = `
                 SELECT a.tutorId, d.* 
                 FROM ${tableName} d
                 JOIN animais a ON d.animalId = a.id
                 WHERE d.id = $1
             `;
-        const docResult = await pool.query(docQuery, [parseInt(id)]);
+        const docResult = await pool.query(docQuery, [parseInt(id)]); // consulta o documento
 
+        // se não encontrar o documento
         if (docResult.rows.length === 0) {
             return res.status(404).json({
                 error: 'Documento não encontrado',
@@ -1155,13 +1158,14 @@ app.delete('/documentos/:tipo/:id', authenticateToken, async (req, res) => {
             });
         }
 
+        // obtem o documento
         const documento = docResult.rows[0];
 
-        // Verificar permissões: tutor ou veterinário
-        if (documento.tutorid !== userId && req.user.tipo !== 'veterinario') {
+        // verifica permissões: tutor 
+        if (documento.tutorid !== userId) {
             return res.status(403).json({
                 error: 'Não autorizado a apagar este documento',
-                detalhes: 'Apenas o tutor ou um veterinário podem apagar documentos'
+                detalhes: 'Apenas o tutor pode apagar documentos'
             });
         }
 
@@ -1356,12 +1360,12 @@ app.delete('/consultas/:id', authenticateToken, async (req, res) => {
 });
 
 // rotas de vacinas==============================================
-// GET /vacinas/proximas -> obtém vacinas nos próximos 7 dias
+// GET /vacinas/proximas -> obtem vacinas nos próximos 7 dias
 app.get('/vacinas/proximas', authenticateToken, async (req, res) => {
     try {
         const userId = req.user.id;
 
-        // Vacinas que precisam ser aplicadas (próximas 7 dias)
+        // vacinas que precisam ser aplicadas (próximas 7 dias)
         const result = await pool.query(`
             SELECT v.*, a.nome as animal_nome, a.especie, tv.descricao,
                 CASE 
@@ -1384,10 +1388,10 @@ app.get('/vacinas/proximas', authenticateToken, async (req, res) => {
                 CASE WHEN v.data_agendada IS NOT NULL THEN v.data_agendada ELSE v.dataProxima END ASC
         `, [userId]);
 
-        // Marcar quais vacinas já foram notificadas (opcional)
+        // marca quais vacinas já foram notificadas
         const vacinasParaNotificar = result.rows.filter(v => !v.notificado);
 
-        // Atualizar status de notificação (se quiser marcar como notificado)
+        // atualiza status de notificação
         if (vacinasParaNotificar.length > 0) {
             const idsParaNotificar = vacinasParaNotificar.map(v => v.id);
             await pool.query(
@@ -1396,6 +1400,7 @@ app.get('/vacinas/proximas', authenticateToken, async (req, res) => {
             );
         }
 
+        // responde com os resultados
         res.status(200).json({
             success: true,
             count: result.rows.length,
@@ -1420,18 +1425,20 @@ app.get('/animais/:animalId/vacinas/agendadas', authenticateToken, async (req, r
         const { animalId } = req.params;
         const userId = req.user.id;
 
-        // Verificar se o animal pertence ao utilizador
+        // verifica se o animal pertence ao utilizador
         const animalCheck = await pool.query(
             'SELECT id FROM animais WHERE id = $1 AND tutorId = $2',
             [animalId, userId]
         );
 
+        // se não encontrar o animal ou não pertencer ao utilizador
         if (animalCheck.rows.length === 0) {
             return res.status(404).json({
                 error: 'Animal não encontrado ou não autorizado'
             });
         }
 
+        // obtem vacinas agendadas para o animal
         const result = await pool.query(
             `SELECT v.*, tv.descricao, tv.periodicidade
                 FROM vacinas v
@@ -1461,31 +1468,33 @@ app.post('/vacinas/agendar', authenticateToken, async (req, res) => {
         const { animalId, tipo_vacina_id, data_agendada, observacoes } = req.body;
         const userId = req.user.id;
 
-        // Validação dos campos obrigatórios
+        // validação dos campos obrigatórios
         if (!animalId || !tipo_vacina_id || !data_agendada) {
             return res.status(400).json({
                 error: 'animalId, tipo_vacina_id e data_agendada são obrigatórios'
             });
         }
 
-        // Verificar se o animal pertence ao utilizador
+        // verifica se o animal pertence ao utilizador
         const animalCheck = await pool.query(
             'SELECT id, nome FROM animais WHERE id = $1 AND tutorId = $2',
             [animalId, userId]
         );
 
+        // se não encontrar o animal ou não pertencer ao utilizador
         if (animalCheck.rows.length === 0) {
             return res.status(404).json({
                 error: 'Animal não encontrado ou não pertence ao utilizador'
             });
         }
 
-        // Obter informações do tipo de vacina
+        // obtem informações do tipo de vacina
         const tipoVacinaResult = await pool.query(
             'SELECT * FROM tipos_vacina WHERE id = $1',
             [tipo_vacina_id]
         );
 
+        // se não encontrar o tipo de vacina
         if (tipoVacinaResult.rows.length === 0) {
             return res.status(404).json({
                 error: 'Tipo de vacina não encontrado'
@@ -1494,25 +1503,25 @@ app.post('/vacinas/agendar', authenticateToken, async (req, res) => {
 
         const tipoVacina = tipoVacinaResult.rows[0];
 
-        // Converter a data agendada para objeto Date
+        // converte a data agendada para objeto Date
         const dataAgendadaObj = new Date(data_agendada);
         const hoje = new Date();
 
-        // Verificar se a data não é no passado
+        // verifica se a data não é no passado
         if (dataAgendadaObj < hoje) {
             return res.status(400).json({
                 error: 'A data agendada não pode ser no passado'
             });
         }
 
-        // Calcular data da próxima vacinação baseado na periodicidade
+        // calcula data da próxima vacinação baseado na periodicidade
         let dataProxima = null;
         if (tipoVacina.periodicidade === 'Anual') {
             dataProxima = new Date(dataAgendadaObj);
             dataProxima.setFullYear(dataProxima.getFullYear() + 1);
         }
 
-        // Inserir a vacina agendada
+        // insere a vacina agendada
         const result = await pool.query(
             `INSERT INTO vacinas 
                 (animalId, tipo, tipo_vacina_id, data_agendada, dataProxima, observacoes, estado)
@@ -1523,7 +1532,7 @@ app.post('/vacinas/agendar', authenticateToken, async (req, res) => {
 
         const vacinaAgendada = result.rows[0];
 
-        // Buscar dados do animal para a resposta
+        // procura dados do animal para a resposta
         const animal = animalCheck.rows[0];
 
         res.status(201).json({
@@ -1553,7 +1562,7 @@ app.put('/vacinas/:id', authenticateToken, async (req, res) => {
         const { dataAplicacao, dataProxima, observacoes } = req.body;
         const userId = req.user.id;
 
-        // Verificar se a vacina existe e pertence ao utilizador
+        // verifica se a vacina existe e pertence ao utilizador
         const vacinaCheck = await pool.query(`
             SELECT v.*, a.tutorId 
             FROM vacinas v
@@ -1561,19 +1570,22 @@ app.put('/vacinas/:id', authenticateToken, async (req, res) => {
             WHERE v.id = $1
         `, [parseInt(id)]);
 
+        // se não encontrar a vacina
         if (vacinaCheck.rows.length === 0) {
             return res.status(404).json({ error: 'Vacina não encontrada' });
         }
 
+        // obtem a vacina
         const vacina = vacinaCheck.rows[0];
 
+        // verifica permissões
         if (vacina.tutorid !== userId && req.user.tipo !== 'veterinario') {
             return res.status(403).json({
                 error: 'Não autorizado a atualizar esta vacina'
             });
         }
 
-        // Atualizar vacina
+        // atualiza vacina
         const result = await pool.query(`
             UPDATE vacinas 
             SET dataAplicacao = COALESCE($1, dataAplicacao),
@@ -1585,12 +1597,14 @@ app.put('/vacinas/:id', authenticateToken, async (req, res) => {
 
         console.log(`Vacina ID ${id} atualizada por utilizador ${userId}`);
 
+        // responde com sucesso
         res.status(200).json({
             success: true,
             mensagem: 'Vacina atualizada com sucesso',
             vacina: result.rows[0]
         });
 
+        // em caso de erro
     } catch (error) {
         console.error('Erro ao atualizar vacina:', error);
         res.status(500).json({
@@ -1600,13 +1614,13 @@ app.put('/vacinas/:id', authenticateToken, async (req, res) => {
     }
 });
 
-// DELETE /vacinas/:id -> cancela/remove uma vacina agendada
+// DELETE /vacinas/:id -> remove uma vacina agendada
 app.delete('/vacinas/:id', authenticateToken, async (req, res) => {
     try {
         const { id } = req.params;
         const userId = req.user.id;
 
-        // Verificar se a vacina existe e pertence ao utilizador
+        // verifica se a vacina existe e pertence ao utilizador
         const vacinaCheck = await pool.query(`
             SELECT v.*, a.tutorId, a.nome as animal_nome
             FROM vacinas v
@@ -1621,23 +1635,23 @@ app.delete('/vacinas/:id', authenticateToken, async (req, res) => {
             });
         }
 
+        // obtem a vacina
         const vacina = vacinaCheck.rows[0];
 
-        // Verificar permissões: tutor ou veterinário
-        if (vacina.tutorid !== userId && req.user.tipo !== 'veterinario') {
+        // verifica permissões
+        if (vacina.tutorid !== userId) {
             return res.status(403).json({
                 error: 'Não autorizado a cancelar esta vacina',
-                detalhes: 'Apenas o tutor ou um veterinário podem cancelar vacinas'
+                detalhes: 'Apenas o tutor pode cancelar vacinas'
             });
         }
 
-        // Apagar a vacina
+        // apaga a vacina
         const deleteResult = await pool.query(
             'DELETE FROM vacinas WHERE id = $1 RETURNING id, tipo, animalId',
             [parseInt(id)]
         );
 
-        // Log da operação
         console.log(`Vacina cancelada: ${vacina.tipo} para ${vacina.animal_nome} (ID: ${id}) por utilizador ${userId}`);
 
         res.status(200).json({
@@ -1683,7 +1697,7 @@ app.post('/vacinas/:id/realizada', authenticateToken, async (req, res) => {
         const { dataAplicacao, lote, veterinario, observacoes } = req.body;
         const userId = req.user.id;
 
-        // Verificar se a vacina existe e pertence ao utilizador
+        // verifica se a vacina existe e pertence ao utilizador
         const vacinaCheck = await pool.query(`
             SELECT v.*, a.tutorId 
             FROM vacinas v
@@ -1697,13 +1711,13 @@ app.post('/vacinas/:id/realizada', authenticateToken, async (req, res) => {
 
         const vacina = vacinaCheck.rows[0];
 
-        if (vacina.tutorid !== userId && req.user.tipo !== 'veterinario') {
+        if (vacina.tutorid !== userId) {
             return res.status(403).json({
                 error: 'Não autorizado'
             });
         }
 
-        // Atualizar vacina como realizada
+        // atualiza vacina como realizada
         const result = await pool.query(`
             UPDATE vacinas 
             SET estado = 'realizada',
@@ -1828,9 +1842,9 @@ const PORT = process.env.PORT || 3000;
 
 async function startServer() {
     try {
-        await initDatabase();
+        await initDatabase(); // inicializa a base de dados
 
-        await cleanupExpiredTokens();
+        await cleanupExpiredTokens(); // limpa tokens expirados ao iniciar
 
         app.listen(PORT, () => {
             console.log(`Servidor na porta ${PORT}`);
@@ -1862,9 +1876,10 @@ async function cleanup() {
 process.on('SIGINT', cleanup);   // Ctrl+C
 process.on('SIGTERM', cleanup);  // Render
 
-// Função para limpar tokens expirados da blacklist
+// função para limpar tokens expirados da blacklist
 async function cleanupExpiredTokens() {
     try {
+        // conta quantos tokens expirados existem
         const countResult = await pool.query(
             'SELECT COUNT(*) as count FROM invalidated_tokens WHERE expires_at < NOW()'
         );
@@ -1886,4 +1901,3 @@ async function cleanupExpiredTokens() {
 
 // executa limpeza a cada hora (3600000 ms)
 setInterval(cleanupExpiredTokens, 3600000);
-

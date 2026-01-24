@@ -1865,19 +1865,25 @@ process.on('SIGTERM', cleanup);  // Render
 // Função para limpar tokens expirados da blacklist
 async function cleanupExpiredTokens() {
     try {
-        const result = await pool.query(
-            'DELETE FROM invalidated_tokens WHERE expires_at < NOW() RETURNING COUNT(*)'
+        const countResult = await pool.query(
+            'SELECT COUNT(*) as count FROM invalidated_tokens WHERE expires_at < NOW()'
         );
-        const deletedCount = parseInt(result.rows[0]?.count || 0);
-
-        if (deletedCount > 0) {
-            console.log(`Limpeza automática: ${deletedCount} tokens expirados removidos da blacklist`);
+        
+        const countToDelete = parseInt(countResult.rows[0].count);
+        
+        if (countToDelete > 0) {
+            // apaga os registos
+            await pool.query(
+                'DELETE FROM invalidated_tokens WHERE expires_at < NOW()'
+            );
+            
+            console.log(`Limpeza automática: ${countToDelete} tokens expirados removidos da blacklist`);
         }
     } catch (err) {
         console.error('Erro na limpeza de tokens expirados:', err);
     }
 }
 
-// Executar limpeza a cada hora (3600000 ms)
+// executa limpeza a cada hora (3600000 ms)
 setInterval(cleanupExpiredTokens, 3600000);
 

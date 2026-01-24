@@ -1830,6 +1830,8 @@ async function startServer() {
     try {
         await initDatabase();
 
+        await cleanupExpiredTokens();
+
         app.listen(PORT, () => {
             console.log(`Servidor na porta ${PORT}`);
             console.log(`PostgreSQL: ${isRender ? 'Render' : 'Local'}`);
@@ -1879,5 +1881,3 @@ async function cleanupExpiredTokens() {
 // Executar limpeza a cada hora (3600000 ms)
 setInterval(cleanupExpiredTokens, 3600000);
 
-// Executar imediatamente ao iniciar
-cleanupExpiredTokens();

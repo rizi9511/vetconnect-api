@@ -815,7 +815,7 @@ app.post('/usuarios/alterar-pin', authenticateToken, async (req, res) => {
 // POST /usuarios/logout -> invalida o token do utilizador
 app.post('/usuarios/logout', authenticateToken, async (req, res) => {
     try {
-        const token = req.token;
+        const {token} = req;
         const userId = req.user.id;
 
         // Obter data de expiração do token
@@ -1754,10 +1754,8 @@ app.post('/vacinas/:id/realizada', authenticateToken, async (req, res) => {
 
 
 // rota principal==============================================
-
 app.get('/', async (req, res) => {
     try {
-
         const [usersCount, animaisCount, consultasCount] = await Promise.all([
             pool.query('SELECT COUNT(*) FROM users'),
             pool.query('SELECT COUNT(*) FROM animais'),
@@ -1768,9 +1766,6 @@ app.get('/', async (req, res) => {
             // status da API
             api_status: 'online',
             message: 'API VetConnect está a funcionar',
-
-            // informação do sistema
-            ambiente: isRender ? 'PRODUÇÃO (Render + PostgreSQL)' : 'DESENVOLVIMENTO',
             database: 'PostgreSQL conectada',
 
             stats: {
@@ -1829,12 +1824,11 @@ app.get('/', async (req, res) => {
             timestamp: new Date().toISOString()
         });
 
+    // se a BD falhar
     } catch (error) {
-        // se a BD falhar
         res.status(500).json({
             api_status: 'offline',
             message: 'API funciona mas base de dados pode estar offline',
-            error: error.message,
             timestamp: new Date().toISOString(),
         });
     }

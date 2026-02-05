@@ -13,8 +13,6 @@ const fs = require('fs'); // módulo para manipulação do sistema de ficheiros
 app.use(cors()); // permite requisições de diferentes origens (CORS)
 app.use(express.json()); // converte JSON do corpo das requisições para objetos JavaScript
 
-
-
 // configuração multer para uploads==============================================
 // configura onde guardar as imagens
 const storage = multer.diskStorage({
@@ -144,7 +142,7 @@ async function initDatabase() {
                 )
             `);
         await pool.query(`
-            CCREATE TABLE IF NOT EXISTS tipos_exame(
+            CREATE TABLE IF NOT EXISTS tipos_exame(
                 id SERIAL PRIMARY KEY,
                 nome TEXT NOT NULL,
                 descricao TEXT
@@ -549,7 +547,15 @@ app.post('/usuarios/login', async (req, res) => {
             id: user.id,
             nome: user.nome,
             email: user.email,
-            tipo: user.tipo
+            telemovel: user.telemovel,
+            nacionalidade: user.nacionalidade,
+            sexo: user.sexo,
+            cc: user.cc,
+            dataNascimento: user.datanascimento,
+            morada: user.morada,
+            tipo: user.tipo,
+            dataRegisto: user.dataregisto,
+            verificado: user.verificado
         };
 
         res.status(200).json({
@@ -1163,12 +1169,15 @@ app.get('/clinicas/:clinicaId/veterinarios', async (req, res) => {
 // GET /consultas/:userId -> consultas de um utilizador
 app.get('/consultas/user/:userId', authenticateToken, async (req, res) => {
     try {
+
         const { userId } = req.params; // obtem o ID do utilizador dos parâmetros da rota
+
         const result = await pool.query(`
-                SELECT c.*, cli.nome as clinicaNome, vet.nome as veterinarioNome
+                SELECT c.*, cli.nome as clinicanome, vet.nome as veterinarionome, a.nome as animalnome, a.especie as animalespecie  
                 FROM consultas c
-                JOIN clinicas cli ON c.clinicaId = cli.id -- junta com clínicas para obter o nome
-                JOIN veterinarios vet ON c.veterinarioId = vet.id -- junta com veterinários para obter o nome
+                JOIN clinicas cli ON c.clinicaId = cli.id
+                JOIN veterinarios vet ON c.veterinarioId = vet.id
+                LEFT JOIN animais a ON c.animalId = a.id 
                 WHERE c.userId = $1 
                 ORDER BY c.data, c.hora
             `, [userId]);

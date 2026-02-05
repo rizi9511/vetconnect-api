@@ -154,8 +154,9 @@ async function initDatabase() {
                 animalId INTEGER NOT NULL REFERENCES animais(id) ON DELETE CASCADE,
                 tipo_exame_id INTEGER REFERENCES tipos_exame(id),
                 dataExame DATE NOT NULL,
-                veterinario TEXT,
-                fotoUrl TEXT,
+                clinicaId INTEGER REFERENCES clinicas(id), 
+                veterinarioId INTEGER REFERENCES veterinarios(id),
+                resultado TEXT,  
                 observacoes TEXT,
                 dataRegisto TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -959,6 +960,70 @@ app.get('/animais/:animalId', authenticateToken, async (req, res) => {
     }
 });
 
+// PUT /animais/:id -> atualiza um animal
+app.put('/animais/:id', authenticateToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { nome, especie, raca, dataNascimento, numeroChip } = req.body;
+        const userId = req.user.id;
+
+        // Validação básica
+        if (!nome || !especie) {
+            return res.status(400).json({
+                error: 'Nome e espécie são obrigatórios'
+            });
+        }
+
+        // Verifica se o animal existe e pertence ao utilizador
+        const animalCheck = await pool.query(
+            'SELECT id, tutorId, nome FROM animais WHERE id = $1',
+            [parseInt(id)]
+        );
+
+        if (animalCheck.rows.length === 0) {
+            return res.status(404).json({
+                error: 'Animal não encontrado'
+            });
+        }
+
+        const animal = animalCheck.rows[0];
+
+        // Verifica permissões
+        if (animal.tutorid !== userId) {
+            return res.status(403).json({
+                error: 'Não autorizado a editar este animal'
+            });
+        }
+
+        // Atualiza o animal
+        const result = await pool.query(`
+            UPDATE animais 
+            SET nome = $1,
+                especie = $2,
+                raca = COALESCE($3, raca),
+                dataNascimento = COALESCE($4, dataNascimento),
+                numeroChip = COALESCE($5, numeroChip)
+            WHERE id = $6
+            RETURNING *
+        `, [nome, especie, raca, dataNascimento, numeroChip, parseInt(id)]);
+
+        console.log(`Animal ID ${id} atualizado por utilizador ${userId}`);
+
+        res.status(200).json({
+            success: true,
+            message: 'Animal atualizado com sucesso',
+            animal: result.rows[0]
+        });
+
+    } catch (error) {
+        console.error('Erro ao atualizar animal:', error);
+        res.status(500).json({
+            error: 'Erro no servidor',
+            details: error.message
+        });
+    }
+});
+
 // POST /animais/:animalId/foto -> upload de foto do animal
 app.post('/animais/:animalId/foto', authenticateToken, upload.single('foto'),  // 'foto' é o nome do campo que o Android vai enviar
     async (req, res) => {
@@ -1622,16 +1687,17 @@ app.get('/exames/tipos', async (req, res) => {
 // POST /exames -> cria novo exame
 app.post('/exames', authenticateToken, async (req, res) => {
     try {
-        const { animalId, tipo_exame_id, dataExame, veterinario, observacoes } = req.body;
+        const { animalId, tipo_exame_id, dataExame, clinicaId, veterinarioId, resultado, observacoes } = req.body;
+
         const userId = req.user.id;
 
-        if (!animalId || !tipo_exame_id || !dataExame) {
+        if (!animalId || !tipo_exame_id || !dataExame || !clinicaId || !veterinarioId) {
             return res.status(400).json({
-                error: 'animalId, tipo_exame_id e dataExame são obrigatórios'
+                error: 'animalId, tipo_exame_id, dataExame, clinicaId e veterinarioId são obrigatórios'
             });
         }
 
-        // Verifica se animal pertence ao user
+        // verifica se animal pertence ao user
         const animalCheck = await pool.query(
             'SELECT id FROM animais WHERE id = $1 AND tutorId = $2',
             [animalId, userId]
@@ -1640,7 +1706,7 @@ app.post('/exames', authenticateToken, async (req, res) => {
             return res.status(403).json({ error: 'Animal não encontrado ou não autorizado' });
         }
 
-        // Verifica tipo de exame
+        // verifica tipo de exame
         const tipoCheck = await pool.query(
             'SELECT id, nome FROM tipos_exame WHERE id = $1',
             [tipo_exame_id]
@@ -1649,21 +1715,64 @@ app.post('/exames', authenticateToken, async (req, res) => {
             return res.status(400).json({ error: 'Tipo de exame não encontrado' });
         }
 
-        // Insere exame
-        const result = await pool.query(
-            `INSERT INTO exames (animalId, tipo_exame_id, dataExame, veterinario, observacoes)
-             VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-            [animalId, tipo_exame_id, dataExame, veterinario, observacoes]
+        // verifica se clínica existe
+        const clinicaCheck = await pool.query(
+            'SELECT nome FROM clinicas WHERE id = $1',
+            [clinicaId]
         );
+        if (clinicaCheck.rows.length === 0) {
+            return res.status(400).json({ error: 'Clínica não encontrada' });
+        }
+
+        // Verifica se veterinário existe
+        const vetCheck = await pool.query(
+            'SELECT nome FROM veterinarios WHERE id = $1 AND clinicaId = $2',
+            [veterinarioId, clinicaId]
+        );
+        if (vetCheck.rows.length === 0) {
+            return res.status(400).json({
+                error: 'Veterinário não encontrado ou não pertence a esta clínica'
+            });
+        }
+
+        // insere exame
+        const result = await pool.query(`
+            INSERT INTO exames 
+            (animalId, tipo_exame_id, dataExame, clinicaId, veterinarioId, resultado, observacoes)
+            VALUES ($1, $2, $3, $4, $5, $6, $7) 
+            RETURNING *,
+                (SELECT nome FROM tipos_exame WHERE id = $2) as tipo_nome,
+                (SELECT nome FROM clinicas WHERE id = $4) as clinica_nome,
+                (SELECT nome FROM veterinarios WHERE id = $5) as veterinario_nome
+        `, [animalId, tipo_exame_id, dataExame, clinicaId, veterinarioId, resultado, observacoes]);
+
 
         const exame = result.rows[0];
         exame.tipo_nome = tipoCheck.rows[0].nome;
 
+        // renomeia campos para corresponder à aplicação
+        const exameResponse = {
+            id: exame.id,
+            animalid: exame.animalid,
+            tipo_exame_id: exame.tipo_exame_id,
+            tipo_nome: exame.tipo_nome,
+            dataexame: exame.dataexame,
+            clinicaid: exame.clinicaid,
+            clinicanome: exame.clinica_nome,
+            veterinarioid: exame.veterinarioid,
+            veterinarionome: exame.veterinario_nome,
+            resultado: exame.resultado,
+            observacoes: exame.observacoes,
+            fotourl: exame.fotourl,
+            dataregisto: exame.dataregisto
+        };
+
         res.status(201).json({
             success: true,
             message: 'Exame criado com sucesso',
-            exame: exame
+            exame: exameResponse
         });
+
 
     } catch (error) {
         console.error('Erro ao criar exame:', error);
@@ -1724,6 +1833,137 @@ app.post('/exames/:id/foto', authenticateToken, upload.single('foto'), async (re
     }
 });
 
+// PUT /exames/:id -> atualiza um exame existente
+app.put('/exames/:id', authenticateToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { dataExame, clinicaId, veterinarioId, resultado, observacoes, tipo_exame_id } = req.body;
+        const userId = req.user.id;
+
+        // Validação básica
+        if (!dataExame) {
+            return res.status(400).json({
+                error: 'dataExame é obrigatória'
+            });
+        }
+
+        // Verifica se o exame existe e pertence ao utilizador
+        const exameCheck = await pool.query(`
+            SELECT e.*, a.tutorId 
+            FROM exames e
+            JOIN animais a ON e.animalId = a.id
+            WHERE e.id = $1
+        `, [parseInt(id)]);
+
+        if (exameCheck.rows.length === 0) {
+            return res.status(404).json({
+                error: 'Exame não encontrado'
+            });
+        }
+
+        const exame = exameCheck.rows[0];
+
+        // Verifica permissões
+        if (exame.tutorid !== userId) {
+            return res.status(403).json({
+                error: 'Não autorizado a editar este exame'
+            });
+        }
+
+        // Verifica se o tipo de exame existe (se foi fornecido)
+        let tipoNome = exame.tipo_exame_id;
+        if (tipo_exame_id) {
+            const tipoCheck = await pool.query(
+                'SELECT nome FROM tipos_exame WHERE id = $1',
+                [tipo_exame_id]
+            );
+            if (tipoCheck.rows.length === 0) {
+                return res.status(400).json({
+                    error: 'Tipo de exame não encontrado'
+                });
+            }
+            tipoNome = tipoCheck.rows[0].nome;
+        }
+
+        // Verifica se clínica existe (se foi fornecida)
+        if (clinicaId) {
+            const clinicaCheck = await pool.query(
+                'SELECT nome FROM clinicas WHERE id = $1',
+                [clinicaId]
+            );
+            if (clinicaCheck.rows.length === 0) {
+                return res.status(400).json({
+                    error: 'Clínica não encontrada'
+                });
+            }
+        }
+
+        // Verifica se veterinário existe (se foi fornecido)
+        if (veterinarioId) {
+            const clinicaIdToCheck = clinicaId || exame.clinicaid;
+            const vetCheck = await pool.query(
+                'SELECT nome FROM veterinarios WHERE id = $1 AND clinicaId = $2',
+                [veterinarioId, clinicaIdToCheck]
+            );
+            if (vetCheck.rows.length === 0) {
+                return res.status(400).json({
+                    error: 'Veterinário não encontrado ou não pertence a esta clínica'
+                });
+            }
+        }
+
+        // atualiza o exame
+        const result = await pool.query(`
+            UPDATE exames 
+            SET dataExame = $1,
+                clinicaId = COALESCE($2, clinicaId),
+                veterinarioId = COALESCE($3, veterinarioId),
+                resultado = COALESCE($4, resultado),
+                observacoes = COALESCE($5, observacoes),
+                tipo_exame_id = COALESCE($6, tipo_exame_id)
+            WHERE id = $7
+            RETURNING *,
+                (SELECT nome FROM tipos_exame WHERE id = exames.tipo_exame_id) as tipo_nome,
+                (SELECT nome FROM clinicas WHERE id = exames.clinicaId) as clinica_nome,
+                (SELECT nome FROM veterinarios WHERE id = exames.veterinarioId) as veterinario_nome
+        `, [dataExame, clinicaId, veterinarioId, resultado, observacoes, tipo_exame_id, parseInt(id)]);
+
+        const updatedExame = result.rows[0];
+
+        // renomeia campos para corresponder à aplicação
+        const exameResponse = {
+            id: updatedExame.id,
+            animalid: updatedExame.animalid,
+            tipo_exame_id: updatedExame.tipo_exame_id,
+            tipo_nome: updatedExame.tipo_nome,
+            dataexame: updatedExame.dataexame,
+            clinicaid: updatedExame.clinicaid,
+            clinicanome: updatedExame.clinica_nome,
+            veterinarioid: updatedExame.veterinarioid,
+            veterinarionome: updatedExame.veterinario_nome,
+            resultado: updatedExame.resultado,
+            observacoes: updatedExame.observacoes,
+            fotourl: updatedExame.fotourl,
+            dataregisto: updatedExame.dataregisto
+        };
+
+        console.log(`Exame ID ${id} atualizado por utilizador ${userId}`);
+
+        res.status(200).json({
+            success: true,
+            message: 'Exame atualizado com sucesso',
+            exame: result.rows[0]
+        });
+
+    } catch (error) {
+        console.error('Erro ao atualizar exame:', error);
+        res.status(500).json({
+            error: 'Erro no servidor',
+            details: error.message
+        });
+    }
+});
+
 // GET /animais/:animalId/exames -> obtém exames de um animal
 app.get('/animais/:animalId/exames', authenticateToken, async (req, res) => {
     try {
@@ -1741,12 +1981,36 @@ app.get('/animais/:animalId/exames', authenticateToken, async (req, res) => {
 
         // Obtém exames
         const result = await pool.query(`
-            SELECT e.*, te.nome as tipo_nome, te.descricao as tipo_descricao
+            SELECT 
+                e.*,
+                te.nome as tipo_nome,
+                te.descricao as tipo_descricao,
+                c.nome as clinicanome,
+                v.nome as veterinarionome
             FROM exames e
             LEFT JOIN tipos_exame te ON e.tipo_exame_id = te.id
+            LEFT JOIN clinicas c ON e.clinicaId = c.id
+            LEFT JOIN veterinarios v ON e.veterinarioId = v.id
             WHERE e.animalId = $1
             ORDER BY e.dataExame DESC
         `, [animalId]);
+
+        // transforma os resultados para corresponder à aplicação
+        const examesFormatados = result.rows.map(exame => ({
+            id: exame.id,
+            animalid: exame.animalid,
+            tipo_exame_id: exame.tipo_exame_id,
+            tipo_nome: exame.tipo_nome,
+            dataexame: exame.dataexame,
+            clinicaid: exame.clinicaid,
+            clinicanome: exame.clinica_nome,
+            veterinarioid: exame.veterinarioid,
+            veterinarionome: exame.veterinario_nome,
+            resultado: exame.resultado,
+            observacoes: exame.observacoes,
+            fotourl: exame.fotourl,
+            dataregisto: exame.dataregisto
+        }));
 
         res.status(200).json({
             success: true,
@@ -1874,6 +2138,7 @@ app.get('/', async (req, res) => {
                     animais: 'POST /animais',
                     animais_utilizador: 'GET /usuarios/:userId/animais',
                     animal_id: 'GET /animais/:animalId',
+                    atualizar_animal: 'PUT /animais/:id',
                     upload_foto: 'POST /animais/:animalId/foto'
                 },
                 vacinas: {
@@ -1890,7 +2155,8 @@ app.get('/', async (req, res) => {
                     criar_exame: 'POST /exames',
                     upload_foto_exame: 'POST /exames/:exameId/foto',
                     exames_animal: 'GET /animais/:animalId/exames',
-                    apagar_exame: 'DELETE /exames/:id'  // ← ADICIONAR ESTA LINHA
+                    atualizar_exame: 'PUT /exames/:id',
+                    apagar_exame: 'DELETE /exames/:id'
                 }
             },
 

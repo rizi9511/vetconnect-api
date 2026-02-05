@@ -85,101 +85,92 @@ async function initDatabase() {
 
         // cria tabelas se não existir
         await pool.query(`
-                CREATE TABLE IF NOT EXISTS users (
-                    id SERIAL PRIMARY KEY,
-                    nome TEXT NOT NULL,
-                    email TEXT UNIQUE NOT NULL,
-                    telemovel TEXT,
-                    tipo TEXT NOT NULL,
-                    dataRegisto TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    verificado BOOLEAN DEFAULT false,
-                    codigoVerificacao TEXT,
-                    pin TEXT,
-                    nacionalidade TEXT,
-                    sexo TEXT,
-                    cc TEXT,
-                    dataNascimento DATE,
-                    morada TEXT
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                nome TEXT NOT NULL,
+                email TEXT UNIQUE NOT NULL,
+                telemovel TEXT,
+                tipo TEXT NOT NULL,
+                dataRegisto TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                verificado BOOLEAN DEFAULT false,
+                codigoVerificacao TEXT,
+                pin TEXT,
+                nacionalidade TEXT,
+                sexo TEXT,
+                cc TEXT,
+                dataNascimento DATE,
+                morada TEXT
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS clinicas (
+                id SERIAL PRIMARY KEY,
+                nome TEXT NOT NULL
+            )
+         `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS veterinarios (
+                id SERIAL PRIMARY KEY,
+                nome TEXT NOT NULL,
+                clinicaId INTEGER REFERENCES clinicas(id) ON DELETE CASCADE -- se a clinica for apagada os veterinários tambem são
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS consultas (
+                id SERIAL PRIMARY KEY,
+                userId INTEGER REFERENCES users(id) ON DELETE CASCADE, -- se o user for apagado as consultas também são
+                animalId INTEGER, 
+                clinicaId INTEGER REFERENCES clinicas(id),
+                veterinarioId INTEGER REFERENCES veterinarios(id),
+                data DATE NOT NULL,
+                hora TIME NOT NULL,
+                motivo TEXT,
+                estado TEXT DEFAULT 'marcada',  -- marcada (default), realizada, cancelada
+                dataMarcacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS animais (
+                id SERIAL PRIMARY KEY,
+                tutorId INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                nome TEXT NOT NULL,
+                especie TEXT,
+                raca TEXT,
+                dataNascimento DATE,
+                fotoUrl TEXT,
+                numeroChip TEXT,
+                codigoUnico TEXT UNIQUE,
+                dataRegisto TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             `);
         await pool.query(`
-                CREATE TABLE IF NOT EXISTS clinicas (
-                    id SERIAL PRIMARY KEY,
-                    nome TEXT NOT NULL
-                )
-            `);
+            CCREATE TABLE IF NOT EXISTS tipos_exame(
+                id SERIAL PRIMARY KEY,
+                nome TEXT NOT NULL,
+                descricao TEXT
+            )
+        `);
         await pool.query(`
-                CREATE TABLE IF NOT EXISTS veterinarios (
-                    id SERIAL PRIMARY KEY,
-                    nome TEXT NOT NULL,
-                    clinicaId INTEGER REFERENCES clinicas(id) ON DELETE CASCADE -- se a clinica for apagada os veterinários tambem são
-                )
-            `);
+            CREATE TABLE IF NOT EXISTS exames (
+                id SERIAL PRIMARY KEY,
+                animalId INTEGER NOT NULL REFERENCES animais(id) ON DELETE CASCADE,
+                tipo_exame_id INTEGER REFERENCES tipos_exame(id),
+                dataExame DATE NOT NULL,
+                veterinario TEXT,
+                fotoUrl TEXT,
+                observacoes TEXT,
+                dataRegisto TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
         await pool.query(`
-                CREATE TABLE IF NOT EXISTS consultas (
-                    id SERIAL PRIMARY KEY,
-                    userId INTEGER REFERENCES users(id) ON DELETE CASCADE, -- se o user for apagado as consultas também são
-                    animalId INTEGER, 
-                    clinicaId INTEGER REFERENCES clinicas(id),
-                    veterinarioId INTEGER REFERENCES veterinarios(id),
-                    data DATE NOT NULL,
-                    hora TIME NOT NULL,
-                    motivo TEXT,
-                    estado TEXT DEFAULT 'marcada',  -- marcada (default), realizada, cancelada
-                    dataMarcacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            `);
-        await pool.query(`
-                CREATE TABLE IF NOT EXISTS animais (
-                    id SERIAL PRIMARY KEY,
-                    tutorId INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                    nome TEXT NOT NULL,
-                    especie TEXT,
-                    raca TEXT,
-                    dataNascimento DATE,
-                    fotoUrl TEXT,
-                    numeroChip TEXT,
-                    codigoUnico TEXT UNIQUE,
-                    dataRegisto TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            `);
-        await pool.query(`
-                CREATE TABLE IF NOT EXISTS receitas (
-                    id SERIAL PRIMARY KEY,
-                    animalId INTEGER NOT NULL REFERENCES animais(id) ON DELETE CASCADE,
-                    dataPrescricao DATE NOT NULL,
-                    medicamento TEXT NOT NULL,
-                    dosagem TEXT,
-                    frequencia TEXT,
-                    duracao TEXT,
-                    veterinario TEXT,
-                    observacoes TEXT,
-                    dataRegisto TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            `);
-        await pool.query(`
-                CREATE TABLE IF NOT EXISTS exames (
-                    id SERIAL PRIMARY KEY,
-                    animalId INTEGER NOT NULL REFERENCES animais(id) ON DELETE CASCADE,
-                    tipo TEXT NOT NULL,
-                    dataExame DATE NOT NULL,
-                    resultado TEXT,
-                    laboratorio TEXT,
-                    veterinario TEXT,
-                    ficheiroUrl TEXT,
-                    observacoes TEXT,
-                    dataRegisto TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            `);
-        await pool.query(`
-                CREATE TABLE IF NOT EXISTS invalidated_tokens (
-                    id SERIAL PRIMARY KEY,
-                    token TEXT NOT NULL,
-                    expires_at TIMESTAMP NOT NULL,
-                    invalidated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE
-                )
-            `);
+            CREATE TABLE IF NOT EXISTS invalidated_tokens (
+                id SERIAL PRIMARY KEY,
+                token TEXT NOT NULL,
+                expires_at TIMESTAMP NOT NULL,
+                invalidated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE
+            )
+        `);
         await pool.query(`
             CREATE TABLE IF NOT EXISTS tipos_vacina (
                 id SERIAL PRIMARY KEY,
@@ -207,6 +198,7 @@ async function initDatabase() {
             )
         `);
 
+
         // insere dados exemplo
         await seedDatabase();
         console.log('Todas as tabelas criadas/verificadas');
@@ -227,31 +219,31 @@ async function seedDatabase() {
 
             // insere clínicas
             const clinicasResult = await pool.query(`
-                    INSERT INTO clinicas (nome) VALUES 
-                    ('Animal Clinic'), 
-                    ('Bichomix - Hospital Veterinário'), 
-                    ('Hospital Veterinário de Lisboa'),
-                    ('Centro Veterinário de Tomar'),
-                    ('VetLuz'),
-                    ('Hospital Veterinário de Alfragide')
-                    RETURNING id -- retorna os IDs das clínicas inseridas
-                `);
+                    INSERT INTO clinicas(nome) VALUES
+            ('Animal Clinic'),
+            ('Bichomix - Hospital Veterinário'),
+            ('Hospital Veterinário de Lisboa'),
+            ('Centro Veterinário de Tomar'),
+            ('VetLuz'),
+            ('Hospital Veterinário de Alfragide')
+                    RETURNING id-- retorna os IDs das clínicas inseridas
+            `);
 
             // insere veterinários
             await pool.query(`
-                    INSERT INTO veterinarios (nome, clinicaId) VALUES
-                    ('Dr. João Silva', 1),    
-                    ('Dra. Ana Costa', 1),    
-                    ('Dr. Rui Pedro', 2),     
-                    ('Dra. Sofia Marques', 2),
-                    ('Dr. Carlos Mendes', 3),
-                    ('Dra. Beatriz Reis', 3),
-                    ('Dr. Miguel Santos', 4),
-                    ('Dra. Inês Oliveira', 4),
-                    ('Dr. Tiago Fernandes', 5),
-                    ('Dra. Catarina Rodrigues', 5),
-                    ('Dr. Pedro Almeida', 6),
-                    ('Dra. Mariana Sousa', 6)
+                    INSERT INTO veterinarios(nome, clinicaId) VALUES
+            ('Dr. João Silva', 1),
+            ('Dra. Ana Costa', 1),
+            ('Dr. Rui Pedro', 2),
+            ('Dra. Sofia Marques', 2),
+            ('Dr. Carlos Mendes', 3),
+            ('Dra. Beatriz Reis', 3),
+            ('Dr. Miguel Santos', 4),
+            ('Dra. Inês Oliveira', 4),
+            ('Dr. Tiago Fernandes', 5),
+            ('Dra. Catarina Rodrigues', 5),
+            ('Dr. Pedro Almeida', 6),
+            ('Dra. Mariana Sousa', 6)
                 `);
 
             // verifica se já existem tipos de vacina
@@ -261,20 +253,47 @@ async function seedDatabase() {
 
                 // insere tipos de vacina de exemplo
                 await pool.query(`
-                    INSERT INTO tipos_vacina (nome, descricao, especie, periodicidade) VALUES
-                    ('Raiva', 'Vacina anual contra raiva', 'Cão/Gato', 'Anual'),
-                    ('Polivalente (V8/V10)', 'Proteção múltipla para cães', 'Cão', 'Anual'),
-                    ('Tripla Felina', 'Proteção contra doenças felinas', 'Gato', 'Anual'),
-                    ('Leishmaniose', 'Prevenção contra leishmaniose', 'Cão', 'Anual'),
-                    ('Tosse do Canil', 'Prevenção da traqueobronquite', 'Cão', 'Anual'),
-                    ('Giardia', 'Contra parasita intestinal', 'Cão/Gato', 'Anual'),
-                    ('Leptospirose', 'Contra bactéria Leptospira', 'Cão', 'Anual'),
-                    ('PIF', 'Peritonite Infeciosa Felina', 'Gato', 'Anual')
+                    INSERT INTO tipos_vacina(nome, descricao, especie, periodicidade) VALUES
+            ('Raiva', 'Vacina anual contra raiva', 'Cão/Gato', 'Anual'),
+            ('Polivalente (V8/V10)', 'Proteção múltipla para cães', 'Cão', 'Anual'),
+            ('Tripla Felina', 'Proteção contra doenças felinas', 'Gato', 'Anual'),
+            ('Leishmaniose', 'Prevenção contra leishmaniose', 'Cão', 'Anual'),
+            ('Tosse do Canil', 'Prevenção da traqueobronquite', 'Cão', 'Anual'),
+            ('Giardia', 'Contra parasita intestinal', 'Cão/Gato', 'Anual'),
+            ('Leptospirose', 'Contra bactéria Leptospira', 'Cão', 'Anual'),
+            ('PIF', 'Peritonite Infeciosa Felina', 'Gato', 'Anual')
                 `);
 
             }
+
+            // verifica se já existe tabela de exames
+            const examesExistentes = await pool.query('SELECT COUNT(*) FROM tipos_exame');
+            if (parseInt(examesExistentes.rows[0].count) === 0) {
+                await pool.query(`
+                    INSERT INTO tipos_exame (nome, descricao) VALUES
+                    ('Ecografia', 'Exame de imagem por ultrassons'),
+                    ('Ressonância Magnética', 'Imagem detalhada por ressonância'),
+                    ('Raio-X', 'Exame radiológico'),
+                    ('Análise Sanguínea', 'Exame de sangue completo'),
+                    ('Análise de Urina', 'Exame de urina'),
+                    ('Análise de Fezes', 'Exame de fezes'),
+                    ('Citologia', 'Exame de células'),
+                    ('Biópsia', 'Retirada de amostra de tecido'),
+                    ('Eletrocardiograma', 'Exame cardíaco'),
+                    ('Endoscopia', 'Exame interno por câmara'),
+                    ('Tomografia Computorizada', 'TC ou CAT scan'),
+                    ('Ultrassonografia', 'Exame por ultrassom'),
+                    ('Teste de Alergias', 'Teste a alergénios'),
+                    ('Exame Oftalmológico', 'Exame aos olhos'),
+                    ('Exame Dentário', 'Exame à dentição')
+                `);
+            }
+
             console.log('Dados de exemplo inseridos');
         }
+
+
+
     } catch (err) {
         console.error('Erro ao inserir dados exemplo:', err);
     }
@@ -367,13 +386,13 @@ app.post('/usuarios', async (req, res) => {
 
         // Inserir novo utilizador
         const result = await pool.query(
-            `INSERT INTO users (nome, email, telemovel, tipo, verificado, codigoVerificacao) 
-        VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, dataRegisto`,
+            `INSERT INTO users(nome, email, telemovel, tipo, verificado, codigoVerificacao) 
+        VALUES($1, $2, $3, $4, $5, $6) RETURNING id, dataRegisto`,
             [nome, email, telemovel, tipo, false, verificationCode] // false - não verificado inicialmente
         );
 
         // na consola mostra o código de verificação que funciona como um SMS simulado
-        console.log(`Utilizador ${nome} criado. Código: ${verificationCode}`);
+        console.log(`Utilizador ${nome} criado.Código: ${verificationCode}`);
 
         // responde com os dados do utilizador
         const userResponse = {
@@ -670,7 +689,7 @@ app.post('/usuarios/recuperar-pin', async (req, res) => {
         );
 
         // simula envio
-        console.log(`Código de recuperação para ${user.nome} (${email}): ${codigoRecuperacao}`);
+        console.log(`Código de recuperação para ${user.nome}(${email}): ${codigoRecuperacao}`);
         res.status(200).json({
             message: 'Código de recuperação enviado',
             codigoRecuperacao: codigoRecuperacao // codigo na consola da API
@@ -795,7 +814,7 @@ app.post('/usuarios/alterar-pin', authenticateToken, async (req, res) => {
         );
 
         // Log da alteração
-        console.log(`PIN alterado para o utilizador ${user.nome} (ID: ${userId})`);
+        console.log(`PIN alterado para o utilizador ${user.nome}(ID: ${userId})`);
 
         // Resposta de sucesso
         res.status(200).json({
@@ -815,7 +834,7 @@ app.post('/usuarios/alterar-pin', authenticateToken, async (req, res) => {
 // POST /usuarios/logout -> invalida o token do utilizador
 app.post('/usuarios/logout', authenticateToken, async (req, res) => {
     try {
-        const {token} = req;
+        const { token } = req;
         const userId = req.user.id;
 
         // Obter data de expiração do token
@@ -824,8 +843,8 @@ app.post('/usuarios/logout', authenticateToken, async (req, res) => {
 
         // Adicionar token à blacklist
         await pool.query(
-            `INSERT INTO invalidated_tokens (token, expires_at, user_id) 
-                VALUES ($1, $2, $3)`,
+            `INSERT INTO invalidated_tokens(token, expires_at, user_id) 
+                VALUES($1, $2, $3)`,
             [token, expiresAt, userId]
         );
 
@@ -863,10 +882,10 @@ app.post('/animais', authenticateToken, async (req, res) => {
         const codigoUnico = 'VT-' + Math.floor(100000 + Math.random() * 900000);
 
         const result = await pool.query(
-            `INSERT INTO animais 
-                (tutorId, nome, especie, raca, dataNascimento, numeroChip, codigoUnico)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
-                RETURNING *`,
+            `INSERT INTO animais
+            (tutorId, nome, especie, raca, dataNascimento, numeroChip, codigoUnico)
+                VALUES($1, $2, $3, $4, $5, $6, $7)
+                RETURNING * `,
             [tutorId, nome, especie, raca, dataNascimento, numeroChip, codigoUnico]
         );
 
@@ -1021,185 +1040,6 @@ app.post('/animais/:animalId/foto', authenticateToken, upload.single('foto'),  /
         }
     }
 );
-
-
-
-// rotas de documentos==============================================
-
-// POST /documentos -> cria documento (receita, vacina ou exame)
-app.post('/documentos', authenticateToken, async (req, res) => {
-    try {
-        const { tipo, animalId, dados } = req.body;
-
-        if (!tipo || !animalId || !dados) {
-            return res.status(400).json({ error: 'Tipo, animalId e dados são obrigatórios' });
-        }
-
-        let result;
-        switch (tipo) {
-            case 'receita':
-                result = await pool.query(
-                    `INSERT INTO receitas 
-                        (animalId, dataPrescricao, medicamento, dosagem, frequencia, duracao, veterinario, observacoes)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                        RETURNING *`,
-                    [animalId, dados.dataPrescricao, dados.medicamento, dados.dosagem,
-                        dados.frequencia, dados.duracao, dados.veterinario, dados.observacoes]
-                );
-                break;
-
-            case 'vacina':
-                result = await pool.query(
-                    `INSERT INTO vacinas 
-                        (animalId, tipo, dataAplicacao, dataProxima, veterinario, lote, observacoes)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7)
-                        RETURNING *`,
-                    [animalId, dados.tipo, dados.dataAplicacao, dados.dataProxima,
-                        dados.veterinario, dados.lote, dados.observacoes]
-                );
-                break;
-
-            case 'exame':
-                result = await pool.query(
-                    `INSERT INTO exames 
-                        (animalId, tipo, dataExame, resultado, laboratorio, veterinario, ficheiroUrl, observacoes)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                        RETURNING *`,
-                    [animalId, dados.tipo, dados.dataExame, dados.resultado,
-                        dados.laboratorio, dados.veterinario, dados.ficheiroUrl, dados.observacoes]
-                );
-                break;
-
-            default:
-                return res.status(400).json({ error: 'Tipo de documento inválido' });
-        }
-
-        res.status(201).json({
-            message: 'Documento criado com sucesso',
-            documento: result.rows[0],
-            tipo: tipo
-        });
-
-    } catch (error) {
-        console.error('Erro ao criar documento:', error);
-        res.status(500).json({ error: 'Erro no servidor' });
-    }
-});
-
-// GET /animais/:animalId/documentos -> obtem todos os documentos de um animal
-app.get('/animais/:animalId/documentos', authenticateToken, async (req, res) => {
-    try {
-        const { animalId } = req.params;
-
-        // verifica permissões
-        const animalCheck = await pool.query(
-            'SELECT tutorId FROM animais WHERE id = $1',
-            [animalId]
-        );
-
-        // se animal não existe
-        if (animalCheck.rows.length === 0) {
-            return res.status(404).json({ error: 'Animal não encontrado' });
-        }
-
-        // verifica se o user é o tutor ou veterinário
-        if (animalCheck.rows[0].tutorid !== req.user.id && req.user.tipo !== 'veterinario') {
-            return res.status(403).json({ error: 'Não autorizado' });
-        }
-
-        // procura todos os documentos
-        const [receitas, vacinas, exames] = await Promise.all([
-            pool.query('SELECT * FROM receitas WHERE animalId = $1 ORDER BY dataPrescricao DESC', [animalId]),
-            pool.query('SELECT * FROM vacinas WHERE animalId = $1 ORDER BY dataAplicacao DESC', [animalId]),
-            pool.query('SELECT * FROM exames WHERE animalId = $1 ORDER BY dataExame DESC', [animalId])
-        ]);
-
-        res.status(200).json({
-            receitas: receitas.rows,
-            vacinas: vacinas.rows,
-            exames: exames.rows
-        });
-
-    } catch (error) {
-        console.error('Erro ao obter documentos:', error);
-        res.status(500).json({ error: 'Erro no servidor' });
-    }
-});
-
-// DELETE /documentos/:tipo/:id -> apaga um documento específico
-app.delete('/documentos/:tipo/:id', authenticateToken, async (req, res) => {
-    try {
-        const { tipo, id } = req.params; // obtem tipo e id dos parâmetros da rota
-        const userId = req.user.id; // obtem o ID do utilizador autenticado
-
-        // valida tipo
-        let tableName;
-        switch (tipo) {
-            case 'receitas': tableName = 'receitas'; break;
-            case 'vacinas': tableName = 'vacinas'; break;
-            case 'exames': tableName = 'exames'; break;
-            default:
-                return res.status(400).json({
-                    error: 'Tipo de documento inválido',
-                    tipos_validos: ['receitas', 'vacinas', 'exames']
-                });
-        }
-
-        // verifica se o documento existe e se o user tem permissão
-        const docQuery = `
-                SELECT a.tutorId, d.* 
-                FROM ${tableName} d
-                JOIN animais a ON d.animalId = a.id
-                WHERE d.id = $1
-            `;
-        const docResult = await pool.query(docQuery, [parseInt(id)]); // consulta o documento
-
-        // se não encontrar o documento
-        if (docResult.rows.length === 0) {
-            return res.status(404).json({
-                error: 'Documento não encontrado',
-                documento_id: id,
-                tipo: tipo
-            });
-        }
-
-        // obtem o documento
-        const documento = docResult.rows[0];
-
-        // verifica permissões: tutor 
-        if (documento.tutorid !== userId) {
-            return res.status(403).json({
-                error: 'Não autorizado a apagar este documento',
-                detalhes: 'Apenas o tutor pode apagar documentos'
-            });
-        }
-
-        // Apagar o documento
-        const deleteResult = await pool.query(
-            `DELETE FROM ${tableName} WHERE id = $1 RETURNING id`,
-            [parseInt(id)]
-        );
-
-        // Log da operação
-        console.log(`Documento apagado: ${tipo} ID ${id} por utilizador ${userId}`);
-
-        res.status(200).json({
-            success: true,
-            message: 'Documento apagado com sucesso',
-            documento: {
-                id: deleteResult.rows[0].id,
-                tipo: tipo
-            }
-        });
-
-    } catch (error) {
-        console.error('Erro ao apagar documento:', error);
-        res.status(500).json({
-            error: 'Erro no servidor',
-            detalhes: error.message
-        });
-    }
-});
 
 
 
@@ -1753,6 +1593,227 @@ app.post('/vacinas/:id/realizada', authenticateToken, async (req, res) => {
 
 
 
+// rota de exames==============================================
+
+// GET /exames/tipos -> obtém todos os tipos de exame
+app.get('/exames/tipos', async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM tipos_exame ORDER BY nome');
+        res.status(200).json({
+            success: true,
+            tipos: result.rows,
+            count: result.rows.length
+        });
+    } catch (error) {
+        console.error('Erro ao obter tipos de exame:', error);
+        res.status(500).json({ error: 'Erro no servidor' });
+    }
+});
+
+// POST /exames -> cria novo exame
+app.post('/exames', authenticateToken, async (req, res) => {
+    try {
+        const { animalId, tipo_exame_id, dataExame, veterinario, observacoes } = req.body;
+        const userId = req.user.id;
+
+        if (!animalId || !tipo_exame_id || !dataExame) {
+            return res.status(400).json({
+                error: 'animalId, tipo_exame_id e dataExame são obrigatórios'
+            });
+        }
+
+        // Verifica se animal pertence ao user
+        const animalCheck = await pool.query(
+            'SELECT id FROM animais WHERE id = $1 AND tutorId = $2',
+            [animalId, userId]
+        );
+        if (animalCheck.rows.length === 0) {
+            return res.status(403).json({ error: 'Animal não encontrado ou não autorizado' });
+        }
+
+        // Verifica tipo de exame
+        const tipoCheck = await pool.query(
+            'SELECT id, nome FROM tipos_exame WHERE id = $1',
+            [tipo_exame_id]
+        );
+        if (tipoCheck.rows.length === 0) {
+            return res.status(400).json({ error: 'Tipo de exame não encontrado' });
+        }
+
+        // Insere exame
+        const result = await pool.query(
+            `INSERT INTO exames (animalId, tipo_exame_id, dataExame, veterinario, observacoes)
+             VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+            [animalId, tipo_exame_id, dataExame, veterinario, observacoes]
+        );
+
+        const exame = result.rows[0];
+        exame.tipo_nome = tipoCheck.rows[0].nome;
+
+        res.status(201).json({
+            success: true,
+            message: 'Exame criado com sucesso',
+            exame: exame
+        });
+
+    } catch (error) {
+        console.error('Erro ao criar exame:', error);
+        res.status(500).json({ error: 'Erro no servidor' });
+    }
+});
+
+// POST /exames/:id/foto -> adiciona foto ao exame
+app.post('/exames/:id/foto', authenticateToken, upload.single('foto'), async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = req.user.id;
+
+        if (!req.file) {
+            return res.status(400).json({ error: 'Nenhuma imagem enviada' });
+        }
+
+        // Verifica se exame existe e pertence ao user
+        const exameCheck = await pool.query(`
+            SELECT e.*, a.tutorId 
+            FROM exames e
+            JOIN animais a ON e.animalId = a.id
+            WHERE e.id = $1
+        `, [id]);
+
+        if (exameCheck.rows.length === 0) {
+            fs.unlinkSync(req.file.path);
+            return res.status(404).json({ error: 'Exame não encontrado' });
+        }
+
+        if (exameCheck.rows[0].tutorid !== userId) {
+            fs.unlinkSync(req.file.path);
+            return res.status(403).json({ error: 'Não autorizado' });
+        }
+
+        // Cria URL da foto
+        const baseUrl = process.env.RENDER_EXTERNAL_URL || `http://${req.get('host')}`;
+        const fotoUrl = `${baseUrl}/uploads/${req.file.filename}`;
+
+        // Atualiza exame
+        await pool.query(
+            'UPDATE exames SET fotoUrl = $1 WHERE id = $2',
+            [fotoUrl, id]
+        );
+
+        res.status(200).json({
+            success: true,
+            message: 'Foto adicionada com sucesso',
+            fotoUrl: fotoUrl
+        });
+
+    } catch (error) {
+        console.error('Erro ao adicionar foto:', error);
+        if (req.file && req.file.path) {
+            try { fs.unlinkSync(req.file.path); } catch { }
+        }
+        res.status(500).json({ error: 'Erro no servidor' });
+    }
+});
+
+// GET /animais/:animalId/exames -> obtém exames de um animal
+app.get('/animais/:animalId/exames', authenticateToken, async (req, res) => {
+    try {
+        const { animalId } = req.params;
+        const userId = req.user.id;
+
+        // Verifica permissões
+        const animalCheck = await pool.query(
+            'SELECT id FROM animais WHERE id = $1 AND tutorId = $2',
+            [animalId, userId]
+        );
+        if (animalCheck.rows.length === 0) {
+            return res.status(403).json({ error: 'Não autorizado' });
+        }
+
+        // Obtém exames
+        const result = await pool.query(`
+            SELECT e.*, te.nome as tipo_nome, te.descricao as tipo_descricao
+            FROM exames e
+            LEFT JOIN tipos_exame te ON e.tipo_exame_id = te.id
+            WHERE e.animalId = $1
+            ORDER BY e.dataExame DESC
+        `, [animalId]);
+
+        res.status(200).json({
+            success: true,
+            exames: result.rows,
+            count: result.rows.length
+        });
+
+    } catch (error) {
+        console.error('Erro ao obter exames:', error);
+        res.status(500).json({ error: 'Erro no servidor' });
+    }
+});
+
+// DELETE /exames/:id -> apaga um exame
+app.delete('/exames/:id', authenticateToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = req.user.id;
+
+        // verifica se o exame existe e pertence ao utilizador
+        const exameCheck = await pool.query(`
+            SELECT e.*, a.tutorId, e.fotoUrl
+            FROM exames e
+            JOIN animais a ON e.animalId = a.id
+            WHERE e.id = $1
+        `, [parseInt(id)]);
+
+        if (exameCheck.rows.length === 0) {
+            return res.status(404).json({
+                error: 'Exame não encontrado'
+            });
+        }
+
+        const exame = exameCheck.rows[0];
+
+        // verifica permissões
+        if (exame.tutorid !== userId) {
+            return res.status(403).json({
+                error: 'Não autorizado a apagar este exame'
+            });
+        }
+
+        // se tiver foto, apaga o ficheiro
+        if (exame.fotourl) {
+            try {
+                const filename = exame.fotourl.split('/uploads/')[1];
+                const filePath = path.join(__dirname, 'uploads', filename);
+                if (fs.existsSync(filePath)) {
+                    fs.unlinkSync(filePath);
+                }
+            } catch (fileError) {
+                console.error('Erro ao apagar ficheiro da foto:', fileError);
+            }
+        }
+
+        // apaga o exame
+        await pool.query('DELETE FROM exames WHERE id = $1', [parseInt(id)]);
+
+        console.log(`Exame ID ${id} apagado por utilizador ${userId}`);
+
+        res.status(200).json({
+            success: true,
+            message: 'Exame apagado com sucesso'
+        });
+
+    } catch (error) {
+        console.error('Erro ao apagar exame:', error);
+        res.status(500).json({
+            error: 'Erro no servidor',
+            details: error.message
+        });
+    }
+});
+
+
+
 // rota principal==============================================
 app.get('/', async (req, res) => {
     try {
@@ -1806,10 +1867,6 @@ app.get('/', async (req, res) => {
                     animal_id: 'GET /animais/:animalId',
                     upload_foto: 'POST /animais/:animalId/foto'
                 },
-                documentos: {
-                    criar_documento: 'POST /documentos',
-                    documentos_animal: 'GET /animais/:animalId/documentos'
-                },
                 vacinas: {
                     vacinas_proximas: 'GET /vacinas/proximas',
                     atualizar_vacina: 'PUT /vacinas/:id',
@@ -1818,13 +1875,20 @@ app.get('/', async (req, res) => {
                     agendar_vacina: 'POST /vacinas/agendar',
                     vacinas_agendadas_animal: 'GET /animais/:animalId/vacinas/agendadas',
                     marcar_realizada: 'POST /vacinas/:id/realizada'
+                },
+                exames: {
+                    tipos_exames: 'GET /exames/tipos',
+                    criar_exame: 'POST /exames',
+                    upload_foto_exame: 'POST /exames/:exameId/foto',
+                    exames_animal: 'GET /animais/:animalId/exames',
+                    apagar_exame: 'DELETE /exames/:id'  // ← ADICIONAR ESTA LINHA
                 }
             },
 
             timestamp: new Date().toISOString()
         });
 
-    // se a BD falhar
+        // se a BD falhar
     } catch (error) {
         res.status(500).json({
             api_status: 'offline',

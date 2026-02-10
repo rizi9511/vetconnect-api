@@ -4,8 +4,9 @@
   "description": "API completa para app VetConnect",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js"
+    "start": "mkdir -p uploads && node server.js",
+    "dev": "nodemon server.js",
+    "build": "echo 'No build step needed'"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

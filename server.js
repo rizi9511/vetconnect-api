@@ -18,7 +18,7 @@ app.use(express.json()); // converte JSON do corpo das requisições para objeto
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
         // pasta onde as imagens serão guardadas
-        const uploadPath = './uploads';
+        const uploadPath = './uploads'; 
 
         // cria pasta se não existir
         if (!fs.existsSync(uploadPath)) {
@@ -26,6 +26,9 @@ const storage = multer.diskStorage({
         }
 
         cb(null, uploadPath); // define o destino
+
+
+
     },
     filename: function (req, file, cb) {
         // nome único para evitar conflitos
@@ -1066,8 +1069,8 @@ app.post('/animais/:animalId/foto', authenticateToken, upload.single('foto'),  /
                 });
             }
 
-            // obtem URL base (Render ou local)
-            const baseUrl = process.env.RENDER_EXTERNAL_URL || `http://${req.get('host')}`;
+            // usa sempre a URL do Render quando disponível
+            const baseUrl = process.env.RENDER_EXTERNAL_URL || `https://${req.get('host')}`;
             const fotoUrl = `${baseUrl}/uploads/${req.file.filename}`;
 
             // atualiza a foto do animal na BD
@@ -2217,6 +2220,8 @@ process.on('SIGTERM', cleanup);  // Render
 // função para limpar tokens expirados da blacklist
 async function cleanupExpiredTokens() {
     try {
+
+        if (!pool) return;
         // conta quantos tokens expirados existem
         const countResult = await pool.query(
             'SELECT COUNT(*) as count FROM invalidated_tokens WHERE expires_at < NOW()'
@@ -2233,9 +2238,10 @@ async function cleanupExpiredTokens() {
             console.log(`Limpeza automática: ${countToDelete} tokens expirados removidos da blacklist`);
         }
     } catch (err) {
-        console.error('Erro na limpeza de tokens expirados:', err);
+        console.error('Erro na limpeza:', err);
     }
 }
+
 
 // executa limpeza a cada hora (3600000 ms)
 setInterval(cleanupExpiredTokens, 3600000);

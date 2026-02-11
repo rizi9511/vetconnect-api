@@ -13,12 +13,13 @@ const fs = require('fs'); // módulo para manipulação do sistema de ficheiros
 app.use(cors()); // permite requisições de diferentes origens (CORS)
 app.use(express.json()); // converte JSON do corpo das requisições para objetos JavaScript
 
-// configuração multer para uploads==============================================
+// CONFIGURAÇÃO MULTER PARA UPLOADS==============================================
+
 // configura onde guardar as imagens
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
         // pasta onde as imagens serão guardadas
-        const uploadPath = './uploads'; 
+        const uploadPath = './uploads';
 
         // cria pasta se não existir
         if (!fs.existsSync(uploadPath)) {
@@ -62,7 +63,7 @@ const upload = multer({
 app.use('/uploads', express.static('./uploads'));
 
 
-// configuração PostgreSQL para Render==============================================
+// CONFIGURAÇÃO POSTGRESQL PARA RENDER==============================================
 
 // verifica se está a correr no Render
 const isRender = process.env.RENDER === 'true';
@@ -75,7 +76,7 @@ const pool = new Pool({
 
 
 
-// inicialização da BD==============================================
+// INICIALIZAÇÃO BD==============================================
 
 // testa conexão e inicializa BD
 async function initDatabase() {
@@ -178,8 +179,7 @@ async function initDatabase() {
                 id SERIAL PRIMARY KEY,
                 nome TEXT NOT NULL,
                 descricao TEXT,
-                especie TEXT,
-                periodicidade TEXT
+                especie TEXT
             )
         `);
         await pool.query(`
@@ -188,11 +188,11 @@ async function initDatabase() {
                 animalId INTEGER NOT NULL REFERENCES animais(id) ON DELETE CASCADE,
                 tipo TEXT NOT NULL,
                 tipo_vacina_id INTEGER REFERENCES tipos_vacina(id), -- REFERÊNCIA AO TIPO
-                data_agendada TIMESTAMP NOT NULL, -- DATA E HORA AGENDADAS PELO UTILIZADOR
+                data_agendada TIMESTAMP NOT NULL, 
                 dataAplicacao DATE, -- QUANDO FOI REALMENTE APLICADA (PODE SER NULO INICIALMENTE)
-                dataProxima DATE, -- PRÓXIMA VACINAÇÃO (CALCULADA BASEADO NA PERIODICIDADE)
-                veterinario TEXT,
-                lote TEXT,
+                dataProxima DATE,
+                clinicaId INTEGER REFERENCES clinicas(id),
+                veterinarioId INTEGER REFERENCES veterinarios(id),
                 observacoes TEXT,
                 estado TEXT DEFAULT 'agendada', -- 'agendada', 'realizada', 'cancelada'
                 notificado BOOLEAN DEFAULT false, -- PARA CONTROLAR NOTIFICAÇÕES
@@ -255,15 +255,15 @@ async function seedDatabase() {
 
                 // insere tipos de vacina de exemplo
                 await pool.query(`
-                    INSERT INTO tipos_vacina(nome, descricao, especie, periodicidade) VALUES
-            ('Raiva', 'Vacina anual contra raiva', 'Cão/Gato', 'Anual'),
-            ('Polivalente (V8/V10)', 'Proteção múltipla para cães', 'Cão', 'Anual'),
-            ('Tripla Felina', 'Proteção contra doenças felinas', 'Gato', 'Anual'),
-            ('Leishmaniose', 'Prevenção contra leishmaniose', 'Cão', 'Anual'),
-            ('Tosse do Canil', 'Prevenção da traqueobronquite', 'Cão', 'Anual'),
-            ('Giardia', 'Contra parasita intestinal', 'Cão/Gato', 'Anual'),
-            ('Leptospirose', 'Contra bactéria Leptospira', 'Cão', 'Anual'),
-            ('PIF', 'Peritonite Infeciosa Felina', 'Gato', 'Anual')
+                    INSERT INTO tipos_vacina(nome, descricao) VALUES
+            ('Raiva', 'Vacina anual contra raiva'),
+            ('Polivalente (V8/V10)', 'Proteção múltipla para cães'),
+            ('Tripla Felina', 'Proteção contra doenças felinas'),
+            ('Leishmaniose', 'Prevenção contra leishmaniose'),
+            ('Tosse do Canil', 'Prevenção da traqueobronquite'),
+            ('Giardia', 'Contra parasita intestinal'),
+            ('Leptospirose', 'Contra bactéria Leptospira'),
+            ('PIF', 'Peritonite Infeciosa Felina')
                 `);
 
             }
@@ -303,7 +303,9 @@ async function seedDatabase() {
 
 
 
-// middleware de autenticação==============================================
+// MIDDLEWARE DE AUTENTICAÇÃO==============================================
+
+
 function authenticateToken(req, res, next) {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -339,7 +341,7 @@ function authenticateToken(req, res, next) {
 
 
 
-// rotas de utilizador==============================================
+// ROTAS DE UTILIZADOR==============================================
 
 // POST /usuarios -> cria um novo utilizador
 app.post('/usuarios', async (req, res) => {
@@ -421,7 +423,7 @@ app.post('/usuarios', async (req, res) => {
 });
 
 
-// rota para verificar o código
+// POST /usuarios/verificar -> rota para verificar o código
 app.post('/usuarios/verificar', async (req, res) => {
     try {
         const { email, codigoVerificacao } = req.body;
@@ -457,7 +459,8 @@ app.post('/usuarios/verificar', async (req, res) => {
 
         // resposta de sucesso
         console.log(`Utilizador ${user.nome} verificado com sucesso.`);
-        res.status(200).json({ message: 'Verificação bem-sucedida' });
+        res.status(200).json({ message: 'Verificação bem-sucedida', userId: user.id });
+
 
     } catch (error) {
         console.error('Erro na verificação:', error);
@@ -466,7 +469,7 @@ app.post('/usuarios/verificar', async (req, res) => {
 });
 
 
-// rota para criar o PIN
+// POST /usuarios/criar-pin -> rota para criar o PIN
 app.post('/usuarios/criar-pin', async (req, res) => {
     try {
         const { email, pin } = req.body;
@@ -502,7 +505,7 @@ app.post('/usuarios/criar-pin', async (req, res) => {
         );
 
         console.log(`PIN criado para o utilizador ${user.nome}.`);
-        res.status(200).json({ message: 'PIN criado com sucesso' });
+        res.status(200).json({ message: 'PIN criado com sucesso', userId: user.id });
 
     } catch (error) {
         console.error('Erro ao criar o PIN:', error);
@@ -876,7 +879,7 @@ app.post('/usuarios/logout', authenticateToken, async (req, res) => {
 
 
 
-// rotas de animais==============================================
+// ROTAS DE ANIMAIS==============================================
 
 // POST /animais -> cria novo animal
 app.post('/animais', authenticateToken, async (req, res) => {
@@ -1117,7 +1120,7 @@ app.post('/animais/:animalId/foto', authenticateToken, upload.single('foto'),  /
 
 
 
-// rotas de consultas==============================================
+// ROTAS DE CONSULTAS==============================================
 
 // POST /consultas -> marca nova consulta
 app.post('/consultas', authenticateToken, async (req, res) => {
@@ -1281,7 +1284,36 @@ app.delete('/consultas/:id', authenticateToken, async (req, res) => {
     }
 });
 
-// rotas de vacinas==============================================
+// ROTAS DE VACINAS==============================================
+
+// GET /vacinas -> obtem todas as vacinas
+app.get('/vacinas', authenticateToken, async (req, res) => {
+    try {
+        
+        const userId = req.user.id; 
+
+        const result = await pool.query(`
+            SELECT v.*, a.nome as animal_nome, c.nome as clinicaNome, vet.nome as veterinarioNome
+            FROM vacinas v
+            JOIN animais a ON v.animalId = a.id
+            LEFT JOIN clinicas c ON v.clinicaId = c.id
+            LEFT JOIN veterinarios vet ON v.veterinarioId = vet.id
+            WHERE a.tutorId = $1
+            ORDER BY v.data_agendada DESC
+        `, [userId]);
+
+        res.status(200).json({
+            success: true,
+            count: result.rows.length,
+            vacinas: result.rows
+        });
+
+    } catch (error) {
+        console.error('Erro ao obter todas as vacinas do utilizador:', error);
+        res.status(500).json({ error: 'Erro no servidor' });
+    }
+});
+
 // GET /vacinas/proximas -> obtem vacinas nos próximos 7 dias
 app.get('/vacinas/proximas', authenticateToken, async (req, res) => {
     try {
@@ -1289,25 +1321,16 @@ app.get('/vacinas/proximas', authenticateToken, async (req, res) => {
 
         // vacinas que precisam ser aplicadas (próximas 7 dias)
         const result = await pool.query(`
-            SELECT v.*, a.nome as animal_nome, a.especie, tv.descricao,
-                CASE 
-                    WHEN v.data_agendada IS NOT NULL THEN 'agendada'
-                    WHEN v.dataProxima IS NOT NULL THEN 'proxima'
-                    ELSE 'outra'
-                    END as categoria
-                    FROM vacinas v
-                    JOIN animais a ON v.animalId = a.id
-                    LEFT JOIN tipos_vacina tv ON v.tipo_vacina_id = tv.id
-                    WHERE a.tutorId = $1 
-                    AND (
-                        -- Vacinas agendadas para os próximos 7 dias
-                        (v.estado = 'agendada' AND v.data_agendada BETWEEN CURRENT_TIMESTAMP AND CURRENT_TIMESTAMP + INTERVAL '7 days')
-                        OR
-                        -- Próximas vacinas baseadas em dataProxima
-                        (v.dataProxima IS NOT NULL AND v.dataProxima BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '7 days')
-                )
-            ORDER BY 
-                CASE WHEN v.data_agendada IS NOT NULL THEN v.data_agendada ELSE v.dataProxima END ASC
+        SELECT v.*, a.nome as animal_nome, a.especie, tv.descricao, c.nome as clinicaNome, vet.nome as veterinarioNome
+                FROM vacinas v
+                JOIN animais a ON v.animalId = a.id
+                LEFT JOIN tipos_vacina tv ON v.tipo_vacina_id = tv.id
+                LEFT JOIN clinicas c ON v.clinicaId = c.id
+                LEFT JOIN veterinarios vet ON v.veterinarioId = vet.id
+                WHERE a.tutorId = $1 
+                AND v.estado = 'agendada' 
+                AND v.data_agendada BETWEEN CURRENT_TIMESTAMP AND CURRENT_TIMESTAMP + INTERVAL '7 days'
+            ORDER BY v.data_agendada ASC
         `, [userId]);
 
         // marca quais vacinas já foram notificadas
@@ -1341,7 +1364,7 @@ app.get('/vacinas/proximas', authenticateToken, async (req, res) => {
     }
 });
 
-// rota para obter vacinas agendadas de um animal
+// GET /animais/:animalId/vacinas/agendadas -> obter vacinas agendadas de um animal
 app.get('/animais/:animalId/vacinas/agendadas', authenticateToken, async (req, res) => {
     try {
         const { animalId } = req.params;
@@ -1361,10 +1384,12 @@ app.get('/animais/:animalId/vacinas/agendadas', authenticateToken, async (req, r
         }
 
         // obtem vacinas agendadas para o animal
-        const result = await pool.query(
-            `SELECT v.*, tv.descricao, tv.periodicidade
+        const result = await pool.query(`
+            SELECT v.*, tv.descricao, c.nome as clinicaNome, vet.nome as veterinarioNome
                 FROM vacinas v
                 LEFT JOIN tipos_vacina tv ON v.tipo_vacina_id = tv.id
+                LEFT JOIN clinicas c ON v.clinicaId = c.id
+                LEFT JOIN veterinarios vet ON v.veterinarioId = vet.id
                 WHERE v.animalId = $1 
                 AND v.estado = 'agendada'
                 ORDER BY v.data_agendada ASC`,
@@ -1387,7 +1412,7 @@ app.get('/animais/:animalId/vacinas/agendadas', authenticateToken, async (req, r
 // POST /vacinas/agendar -> agenda nova vacina
 app.post('/vacinas/agendar', authenticateToken, async (req, res) => {
     try {
-        const { animalId, tipo_vacina_id, data_agendada, observacoes } = req.body;
+        const { animalId, tipo_vacina_id, data_agendada, clinicaId, veterinarioId, observacoes } = req.body;
         const userId = req.user.id;
 
         // validação dos campos obrigatórios
@@ -1436,20 +1461,13 @@ app.post('/vacinas/agendar', authenticateToken, async (req, res) => {
             });
         }
 
-        // calcula data da próxima vacinação baseado na periodicidade
-        let dataProxima = null;
-        if (tipoVacina.periodicidade === 'Anual') {
-            dataProxima = new Date(dataAgendadaObj);
-            dataProxima.setFullYear(dataProxima.getFullYear() + 1);
-        }
-
         // insere a vacina agendada
         const result = await pool.query(
-            `INSERT INTO vacinas 
-                (animalId, tipo, tipo_vacina_id, data_agendada, dataProxima, observacoes, estado)
-                VALUES ($1, $2, $3, $4, $5, $6, 'agendada')
-                RETURNING *`,
-            [animalId, tipoVacina.nome, tipo_vacina_id, data_agendada, dataProxima, observacoes]
+            `INSERT INTO vacinas
+            (animalId, tipo, tipo_vacina_id, data_agendada clinicaId, veterinarioId, observacoes, estado)
+                VALUES($1, $2, $3, $4, $5, $6, $7, 'agendada')
+                RETURNING * `,
+            [animalId, tipoVacina.nome, tipo_vacina_id, data_agendada, clinicaId, veterinarioId, observacoes]
         );
 
         const vacinaAgendada = result.rows[0];
@@ -1459,13 +1477,7 @@ app.post('/vacinas/agendar', authenticateToken, async (req, res) => {
 
         res.status(201).json({
             success: true,
-            message: 'Vacina agendada com sucesso',
-            vacina: vacinaAgendada,
-            animal: {
-                id: animal.id,
-                nome: animal.nome
-            },
-            tipo_vacina: tipoVacina
+            message: 'Vacina agendada com sucesso'
         });
 
     } catch (error) {
@@ -1481,7 +1493,7 @@ app.post('/vacinas/agendar', authenticateToken, async (req, res) => {
 app.put('/vacinas/:id', authenticateToken, async (req, res) => {
     try {
         const { id } = req.params;
-        const { dataAplicacao, dataProxima, observacoes } = req.body;
+        const { tipo_vacina_id, dataAplicacao, clinicaId, veterinarioId, observacoes } = req.body;
         const userId = req.user.id;
 
         // verifica se a vacina existe e pertence ao utilizador
@@ -1490,7 +1502,7 @@ app.put('/vacinas/:id', authenticateToken, async (req, res) => {
             FROM vacinas v
             JOIN animais a ON v.animalId = a.id
             WHERE v.id = $1
-        `, [parseInt(id)]);
+            `, [parseInt(id)]);
 
         // se não encontrar a vacina
         if (vacinaCheck.rows.length === 0) {
@@ -1509,15 +1521,15 @@ app.put('/vacinas/:id', authenticateToken, async (req, res) => {
 
         // atualiza vacina
         const result = await pool.query(`
-            UPDATE vacinas 
-            SET dataAplicacao = COALESCE($1, dataAplicacao),
-                dataProxima = COALESCE($2, dataProxima),
-                observacoes = COALESCE($3, observacoes)
-            WHERE id = $4
-            RETURNING *
-        `, [dataAplicacao, dataProxima, observacoes, parseInt(id)]);
+        UPDATE vacinasSET tipo_vacina_id = COALESCE($1, tipo_vacina_id),
+            dataAplicacao = COALESCE($2, dataAplicacao),
+            clinicaId = COALESCE($3, clinicaId),
+            veterinarioId = COALESCE($4, veterinarioId),
+            observacoes = COALESCE($5, observacoes)
+        WHERE id = $6
+        RETURNING *
+        `, [tipo_vacina_id, dataAplicacao, clinicaId, veterinarioId, observacoes, parseInt(id)]);
 
-        console.log(`Vacina ID ${id} atualizada por utilizador ${userId}`);
 
         // responde com sucesso
         res.status(200).json({
@@ -1548,7 +1560,7 @@ app.delete('/vacinas/:id', authenticateToken, async (req, res) => {
             FROM vacinas v
             JOIN animais a ON v.animalId = a.id
             WHERE v.id = $1
-        `, [parseInt(id)]);
+            `, [parseInt(id)]);
 
         if (vacinaCheck.rows.length === 0) {
             return res.status(404).json({
@@ -1574,7 +1586,7 @@ app.delete('/vacinas/:id', authenticateToken, async (req, res) => {
             [parseInt(id)]
         );
 
-        console.log(`Vacina cancelada: ${vacina.tipo} para ${vacina.animal_nome} (ID: ${id}) por utilizador ${userId}`);
+        console.log(`Vacina cancelada: ${vacina.tipo} para ${vacina.animal_nome}(ID: ${id}) por utilizador ${userId}`);
 
         res.status(200).json({
             success: true,
@@ -1595,7 +1607,7 @@ app.delete('/vacinas/:id', authenticateToken, async (req, res) => {
     }
 });
 
-// GET /vacinas/tipos -> obtém todos os tipos de vacinas disponíveis (DA BD!)
+// GET /vacinas/tipos -> obtém todos os tipos de vacinas disponíveis
 app.get('/vacinas/tipos', async (req, res) => {
     try {
         const result = await pool.query('SELECT * FROM tipos_vacina ORDER BY nome');
@@ -1625,7 +1637,7 @@ app.post('/vacinas/:id/realizada', authenticateToken, async (req, res) => {
             FROM vacinas v
             JOIN animais a ON v.animalId = a.id
             WHERE v.id = $1
-        `, [parseInt(id)]);
+            `, [parseInt(id)]);
 
         if (vacinaCheck.rows.length === 0) {
             return res.status(404).json({ error: 'Vacina não encontrada' });
@@ -1643,13 +1655,13 @@ app.post('/vacinas/:id/realizada', authenticateToken, async (req, res) => {
         const result = await pool.query(`
             UPDATE vacinas 
             SET estado = 'realizada',
-                dataAplicacao = COALESCE($1, CURRENT_DATE),
-                lote = COALESCE($2, lote),
-                veterinario = COALESCE($3, veterinario),
-                observacoes = COALESCE($4, observacoes)
+            dataAplicacao = COALESCE($1, CURRENT_DATE),
+            lote = COALESCE($2, lote),
+            veterinario = COALESCE($3, veterinario),
+            observacoes = COALESCE($4, observacoes)
             WHERE id = $5
             RETURNING *
-        `, [dataAplicacao, lote, veterinario, observacoes, parseInt(id)]);
+            `, [dataAplicacao, lote, veterinario, observacoes, parseInt(id)]);
 
         console.log(`Vacina ID ${id} marcada como realizada por utilizador ${userId}`);
 
@@ -1670,7 +1682,7 @@ app.post('/vacinas/:id/realizada', authenticateToken, async (req, res) => {
 
 
 
-// rota de exames==============================================
+// ROTAS DE EXAMES==============================================
 
 // GET /exames/tipos -> obtém todos os tipos de exame
 app.get('/exames/tipos', async (req, res) => {
@@ -1740,13 +1752,13 @@ app.post('/exames', authenticateToken, async (req, res) => {
 
         // insere exame
         const result = await pool.query(`
-            INSERT INTO exames 
+            INSERT INTO exames
             (animalId, tipo_exame_id, dataExame, clinicaId, veterinarioId, resultado, observacoes)
-            VALUES ($1, $2, $3, $4, $5, $6, $7) 
+            VALUES($1, $2, $3, $4, $5, $6, $7) 
             RETURNING *,
-                (SELECT nome FROM tipos_exame WHERE id = $2) as tipo_nome,
-                (SELECT nome FROM clinicas WHERE id = $4) as clinica_nome,
-                (SELECT nome FROM veterinarios WHERE id = $5) as veterinario_nome
+            (SELECT nome FROM tipos_exame WHERE id = $2) as tipo_nome,
+        (SELECT nome FROM clinicas WHERE id = $4) as clinica_nome,
+    (SELECT nome FROM veterinarios WHERE id = $5) as veterinario_nome
         `, [animalId, tipo_exame_id, dataExame, clinicaId, veterinarioId, resultado, observacoes]);
 
 
@@ -1799,7 +1811,7 @@ app.post('/exames/:id/foto', authenticateToken, upload.single('foto'), async (re
             FROM exames e
             JOIN animais a ON e.animalId = a.id
             WHERE e.id = $1
-        `, [id]);
+    `, [id]);
 
         if (exameCheck.rows.length === 0) {
             fs.unlinkSync(req.file.path);
@@ -2090,7 +2102,7 @@ app.delete('/exames/:id', authenticateToken, async (req, res) => {
 
 
 
-// rota principal==============================================
+// ROTA PRINCIPAL==============================================
 app.get('/', async (req, res) => {
     try {
         const [usersCount, animaisCount, consultasCount] = await Promise.all([
@@ -2145,6 +2157,7 @@ app.get('/', async (req, res) => {
                     upload_foto: 'POST /animais/:animalId/foto'
                 },
                 vacinas: {
+                    vacinas: 'GET /vacinas',
                     vacinas_proximas: 'GET /vacinas/proximas',
                     atualizar_vacina: 'PUT /vacinas/:id',
                     cancelar_vacina: 'DELETE /vacinas/:id',
@@ -2178,7 +2191,8 @@ app.get('/', async (req, res) => {
 
 
 
-// inicialização do servidor==============================================
+// INICIALIZAÇÃO DO SERVIDOR==============================================
+
 const PORT = process.env.PORT || 3000;
 
 async function startServer() {
@@ -2203,7 +2217,7 @@ startServer();
 
 
 
-// cleanup do servidor==============================================
+// CLEANUP DO SERVIDOR==============================================
 async function cleanup() {
     console.log('A limpar recursos');
     try {

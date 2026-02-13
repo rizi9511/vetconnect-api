@@ -179,7 +179,6 @@ async function initDatabase() {
                 id SERIAL PRIMARY KEY,
                 nome TEXT NOT NULL,
                 descricao TEXT,
-                especie TEXT
             )
         `);
         await pool.query(`
@@ -305,7 +304,6 @@ async function seedDatabase() {
 
 // MIDDLEWARE DE AUTENTICAÇÃO==============================================
 
-
 function authenticateToken(req, res, next) {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -343,8 +341,8 @@ function authenticateToken(req, res, next) {
 
 // ROTAS DE UTILIZADOR==============================================
 
-// POST /usuarios -> cria um novo utilizador
-app.post('/usuarios', async (req, res) => {
+// POST /utilizadores -> cria um novo utilizador
+app.post('/utilizadores', async (req, res) => {
     try {
         const { nome, email, telemovel, tipo } = req.body;
 
@@ -423,8 +421,8 @@ app.post('/usuarios', async (req, res) => {
 });
 
 
-// POST /usuarios/verificar -> rota para verificar o código
-app.post('/usuarios/verificar', async (req, res) => {
+// POST /utilizadores/verificar -> rota para verificar o código
+app.post('/utilizadores/verificar', async (req, res) => {
     try {
         const { email, codigoVerificacao } = req.body;
 
@@ -469,8 +467,8 @@ app.post('/usuarios/verificar', async (req, res) => {
 });
 
 
-// POST /usuarios/criar-pin -> rota para criar o PIN
-app.post('/usuarios/criar-pin', async (req, res) => {
+// POST /utilizadores/criar-pin -> rota para criar o PIN
+app.post('/utilizadores/criar-pin', async (req, res) => {
     try {
         const { email, pin } = req.body;
 
@@ -514,7 +512,7 @@ app.post('/usuarios/criar-pin', async (req, res) => {
 });
 
 // rota de Login
-app.post('/usuarios/login', async (req, res) => {
+app.post('/utilizadores/login', async (req, res) => {
     try {
         const { email, pin } = req.body;
 
@@ -579,8 +577,8 @@ app.post('/usuarios/login', async (req, res) => {
 
 // CRUD de utilizadores
 
-// GET /usuarios -> obter todos os utilizadores
-app.get('/usuarios', async (req, res) => {
+// GET /utilizadores -> obter todos os utilizadores
+app.get('/utilizadores', async (req, res) => {
     try {
         const result = await pool.query(
             'SELECT id, nome, email, tipo, dataRegisto, verificado FROM users' // Excluir campos sensíveis como PIN e código de verificação
@@ -592,8 +590,8 @@ app.get('/usuarios', async (req, res) => {
     }
 });
 
-// GET /usuarios/:id -> obter um utilizador específico
-app.get('/usuarios/:id', async (req, res) => {
+// GET /utilizadores/:id -> obter um utilizador específico
+app.get('/utilizadores/:id', async (req, res) => {
     try {
         const { id } = req.params; // Obter ID dos parâmetros da rota
         const result = await pool.query(
@@ -612,8 +610,8 @@ app.get('/usuarios/:id', async (req, res) => {
     }
 });
 
-// PUT /usuarios/:id -> atualizar um utilizador
-app.put('/usuarios/:id', async (req, res) => {
+// PUT /utilizadores/:id -> atualizar um utilizador
+app.put('/utilizadores/:id', async (req, res) => {
     try {
         const { id } = req.params; // Obter ID dos parâmetros da rota
         const { nome, email, tipo } = req.body; // Obter dados do corpo da requisição
@@ -648,8 +646,8 @@ app.put('/usuarios/:id', async (req, res) => {
     }
 });
 
-// DELETE /usuarios/:id -> eliminar um utilizador
-app.delete('/usuarios/:id', async (req, res) => {
+// DELETE /utilizadores/:id -> eliminar um utilizador
+app.delete('/utilizadores/:id', async (req, res) => {
     try {
         const { id } = req.params; // Obter ID dos parâmetros da rota
         const result = await pool.query(
@@ -668,8 +666,8 @@ app.delete('/usuarios/:id', async (req, res) => {
     }
 });
 
-// POST /usuarios/recuperar-pin
-app.post('/usuarios/recuperar-pin', async (req, res) => {
+// POST /utilizadores/recuperar-pin
+app.post('/utilizadores/recuperar-pin', async (req, res) => {
     try {
         const { email } = req.body;
 
@@ -714,8 +712,8 @@ app.post('/usuarios/recuperar-pin', async (req, res) => {
     }
 });
 
-// POST /usuarios/redefinir-pin
-app.post('/usuarios/redefinir-pin', async (req, res) => {
+// POST /utilizadores/redefinir-pin
+app.post('/utilizadores/redefinir-pin', async (req, res) => {
     try {
         const { email, codigoRecuperacao, novoPin } = req.body;
 
@@ -761,8 +759,8 @@ app.post('/usuarios/redefinir-pin', async (req, res) => {
     }
 });
 
-// POST /usuarios/alterar-pin -> altera o PIN do utilizador autenticado
-app.post('/usuarios/alterar-pin', authenticateToken, async (req, res) => {
+// POST /utilizadores/alterar-pin -> altera o PIN do utilizador autenticado
+app.post('/utilizadores/alterar-pin', authenticateToken, async (req, res) => {
     try {
         const { pinAtual, novoPin } = req.body;
         const userId = req.user.id; // ID do utilizador autenticado (vem do token)
@@ -844,8 +842,8 @@ app.post('/usuarios/alterar-pin', authenticateToken, async (req, res) => {
     }
 });
 
-// POST /usuarios/logout -> invalida o token do utilizador
-app.post('/usuarios/logout', authenticateToken, async (req, res) => {
+// POST /utilizadores/logout -> invalida o token do utilizador
+app.post('/utilizadores/logout', authenticateToken, async (req, res) => {
     try {
         const { token } = req;
         const userId = req.user.id;
@@ -910,12 +908,12 @@ app.post('/animais', authenticateToken, async (req, res) => {
     }
 });
 
-// GET /usuarios/:userId/animais -> obtem animais de um tutor
-app.get('/usuarios/:userId/animais', authenticateToken, async (req, res) => {
+// GET /utilizadores/:userId/animais -> obtem animais de um tutor
+app.get('/utilizadores/:userId/animais', authenticateToken, async (req, res) => {
     try {
         const { userId } = req.params;
 
-        // Verificar se o usuário tem permissão
+        // Verificar se o utilizador tem permissão
         if (parseInt(userId) !== req.user.id && req.user.tipo !== 'veterinario') {
             return res.status(403).json({ error: 'Não autorizado' });
         }
@@ -1464,7 +1462,7 @@ app.post('/vacinas/agendar', authenticateToken, async (req, res) => {
         // insere a vacina agendada
         const result = await pool.query(
             `INSERT INTO vacinas
-            (animalId, tipo, tipo_vacina_id, data_agendada clinicaId, veterinarioId, observacoes, estado)
+            (animalId, tipo, tipo_vacina_id, data_agendada, clinicaId, veterinarioId, observacoes, estado)
                 VALUES($1, $2, $3, $4, $5, $6, $7, 'agendada')
                 RETURNING * `,
             [animalId, tipoVacina.nome, tipo_vacina_id, data_agendada, clinicaId, veterinarioId, observacoes]
@@ -1521,7 +1519,7 @@ app.put('/vacinas/:id', authenticateToken, async (req, res) => {
 
         // atualiza vacina
         const result = await pool.query(`
-        UPDATE vacinasSET tipo_vacina_id = COALESCE($1, tipo_vacina_id),
+        UPDATE vacinas SET tipo_vacina_id = COALESCE($1, tipo_vacina_id),
             dataAplicacao = COALESCE($2, dataAplicacao),
             clinicaId = COALESCE($3, clinicaId),
             veterinarioId = COALESCE($4, veterinarioId),
@@ -2126,20 +2124,20 @@ app.get('/', async (req, res) => {
             // endpoints disponíveis
             endpoints: {
                 auth: {
-                    criar: 'POST /usuarios',
-                    verificar: 'POST /usuarios/verificar',
-                    criarPin: 'POST /usuarios/criar-pin',
-                    login: 'POST /usuarios/login',
-                    alterarPin: 'POST /usuarios/alterar-pin',
-                    logout: 'POST /usuarios/logout',
-                    recuperarPin: 'POST /usuarios/recuperar-pin',
-                    redefinirPin: 'POST /usuarios/redefinir-pin'
+                    criar: 'POST /utilizadores',
+                    verificar: 'POST /utilizadores/verificar',
+                    criarPin: 'POST /utilizadores/criar-pin',
+                    login: 'POST /utilizadores/login',
+                    alterarPin: 'POST /utilizadores/alterar-pin',
+                    logout: 'POST /utilizadores/logout',
+                    recuperarPin: 'POST /utilizadores/recuperar-pin',
+                    redefinirPin: 'POST /utilizadores/redefinir-pin'
                 },
                 dados: {
-                    usuarios: 'GET /usuarios',
-                    usuario_id: 'GET /usuarios/:id',
-                    atualizar: 'PUT /usuarios/:id',
-                    eliminar: 'DELETE /usuarios/:id'
+                    utilizadores: 'GET /utilizadores',
+                    utilizador_id: 'GET /utilizadores/:id',
+                    atualizar: 'PUT /utilizadores/:id',
+                    eliminar: 'DELETE /utilizadores/:id'
                 },
                 consultas: {
                     clinicas: 'GET /clinicas',
@@ -2151,7 +2149,7 @@ app.get('/', async (req, res) => {
                 },
                 animais: {
                     animais: 'POST /animais',
-                    animais_utilizador: 'GET /usuarios/:userId/animais',
+                    animais_utilizador: 'GET /utilizadores/:userId/animais',
                     animal_id: 'GET /animais/:animalId',
                     atualizar_animal: 'PUT /animais/:id',
                     upload_foto: 'POST /animais/:animalId/foto'

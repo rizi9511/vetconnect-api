@@ -2644,15 +2644,12 @@ app.get('/', async (req, res) => {
                     criar_pin: 'POST /utilizadores/criar-pin',
                     login: 'POST /utilizadores/login',
                     alterar_pin: 'POST /utilizadores/alterar-pin',
-                    logout: 'POST /utilizadores/logout',
-                    recuperar_pin: 'POST /utilizadores/recuperar-pin',
-                    redefinir_pin: 'POST /utilizadores/redefinir-pin'
+                    logout: 'POST /utilizadores/logout'
                 },
                 utilizadores: {
                     listar: 'GET /utilizadores',
                     obter: 'GET /utilizadores/:id',
-                    atualizar: 'PUT /utilizadores/:id',
-                    eliminar: 'DELETE /utilizadores/:id'
+                    atualizar: 'PUT /utilizadores/:id'
                 },
                 animais: {
                     criar: 'POST /animais',

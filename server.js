@@ -121,7 +121,7 @@ async function initDatabase() {
             CREATE TABLE IF NOT EXISTS consultas (
                 id SERIAL PRIMARY KEY,
                 userId INTEGER REFERENCES users(id) ON DELETE CASCADE, -- se o user for apagado as consultas também são
-                animalId INTEGER, 
+                animalId INTEGER REFERENCES animais(id) ON DELETE CASCADE, 
                 clinicaId INTEGER REFERENCES clinicas(id),
                 veterinarioId INTEGER REFERENCES veterinarios(id),
                 data DATE NOT NULL,
@@ -178,7 +178,7 @@ async function initDatabase() {
             CREATE TABLE IF NOT EXISTS tipos_vacina (
                 id SERIAL PRIMARY KEY,
                 nome TEXT NOT NULL,
-                descricao TEXT,
+                descricao TEXT
             )
         `);
         await pool.query(`
@@ -337,6 +337,35 @@ function authenticateToken(req, res, next) {
         });
 }
 
+
+// MIDDLEWARE PARA TESTES - Ignora autenticação quando ?debug=true
+app.use((req, res, next) => {
+    // Se tiver ?debug=true na URL, ignora autenticação
+    if (req.query.debug === 'true' && process.env.DEBUG_MODE === 'true') {
+        console.log(`🔧 MODO DEBUG: ${req.method} ${req.path}`);
+        
+        // Criar um user genérico com poderes de veterinário
+        req.user = { 
+            id: 999, 
+            email: 'debug@teste.com',
+            tipo: 'veterinario'  // Veterinário vê tudo
+        };
+        req.token = 'debug-token';
+        
+        // Guardar referência para o método original
+        const originalJson = res.json;
+        
+        // Interceptar a resposta para adicionar aviso
+        res.json = function(data) {
+            // Adicionar aviso apenas se for objeto
+            if (data && typeof data === 'object') {
+                data.aviso = '🔧 Modo debug ativo - Dados reais';
+            }
+            return originalJson.call(this, data);
+        };
+    }
+    next();
+});
 
 
 // ROTAS DE UTILIZADOR==============================================
@@ -576,14 +605,21 @@ app.post('/utilizadores/login', async (req, res) => {
 });
 
 // CRUD de utilizadores
-
-// GET /utilizadores -> obter todos os utilizadores
-app.get('/utilizadores', async (req, res) => {
+// GET /utilizadores -> obter todos os utilizadores 
+app.get('/utilizadores', authenticateToken, async (req, res) => {
     try {
+        console.log(`Utilizador ${req.user.id} (${req.user.tipo}) acedeu à lista de utilizadores.`);
+        
+        // Vou assumir que qualquer user autenticado pode ver (mas limitamos os campos)
         const result = await pool.query(
-            'SELECT id, nome, email, tipo, dataRegisto, verificado FROM users' // Excluir campos sensíveis como PIN e código de verificação
+            'SELECT id, nome, email, tipo, dataRegisto, verificado FROM users ORDER BY nome'
         );
-        res.status(200).json(result.rows);
+        
+        res.status(200).json({
+            success: true,
+            count: result.rows.length,
+            utilizadores: result.rows
+        });
     } catch (error) {
         console.error('Erro ao procurar utilizadores:', error);
         res.status(500).json({ error: 'Erro ao procurar utilizadores' });
@@ -591,9 +627,19 @@ app.get('/utilizadores', async (req, res) => {
 });
 
 // GET /utilizadores/:id -> obter um utilizador específico
-app.get('/utilizadores/:id', async (req, res) => {
+app.get('/utilizadores/:id', authenticateToken, async (req, res) => {
     try {
         const { id } = req.params; // Obter ID dos parâmetros da rota
+        const userIdFromToken = req.user.id; // ID do utilizador autenticado
+
+        // Verificar permissões - o utilizador só pode ver os seus próprios dados
+        // A menos que seja um veterinário ou admin (se existir esse tipo)
+        if (parseInt(id) !== userIdFromToken && req.user.tipo !== 'veterinario') {
+            return res.status(403).json({ 
+                error: 'Acesso negado. Só pode visualizar os seus próprios dados.' 
+            });
+        }
+
         const result = await pool.query(
             'SELECT id, nome, email, telemovel, tipo, dataRegisto, verificado, nacionalidade, sexo, cc, dataNascimento, morada FROM users WHERE id = $1',
             [id]
@@ -603,6 +649,8 @@ app.get('/utilizadores/:id', async (req, res) => {
             return res.status(404).json({ error: 'Utilizador não encontrado' });
         }
 
+        console.log(`Utilizador ID ${userIdFromToken} acedeu aos dados do utilizador ID ${id}`);
+
         res.status(200).json(result.rows[0]);
     } catch (error) {
         console.error('Erro ao procurar utilizador:', error);
@@ -611,153 +659,154 @@ app.get('/utilizadores/:id', async (req, res) => {
 });
 
 // PUT /utilizadores/:id -> atualizar um utilizador
-app.put('/utilizadores/:id', async (req, res) => {
+app.put('/utilizadores/:id', authenticateToken, async (req, res) => {
     try {
-        const { id } = req.params; // Obter ID dos parâmetros da rota
-        const { nome, email, tipo } = req.body; // Obter dados do corpo da requisição
+        const { id } = req.params; // ID do utilizador a ser atualizado
+        const userIdFromToken = req.user.id; // ID do utilizador autenticado
+        
+        // Dados que podem ser atualizados (expandidos para incluir mais campos)
+        const { 
+            nome, 
+            email, 
+            telemovel,
+            nacionalidade, 
+            sexo, 
+            cc, 
+            dataNascimento, 
+            morada 
+        } = req.body;
 
-        if (!nome || !email || !tipo) {
-            return res.status(400).json({ error: 'Todos os campos são obrigatórios' });
-        }
+        // IMPEDIR que o utilizador mude o próprio tipo ou outros campos sensíveis
+        // Estes campos só devem ser alterados por administradores (se existir essa funcionalidade)
 
-        // Verificar se o email já pertence a outro utilizador
-        const emailCheck = await pool.query(
-            'SELECT id FROM users WHERE email = $1 AND id != $2',
-            [email, id]
-        );
-
-        if (emailCheck.rows.length > 0) {
-            return res.status(400).json({ error: 'Email já está em uso por outro utilizador' });
-        }
-
-        const result = await pool.query(
-            'UPDATE users SET nome = $1, email = $2, tipo = $3 WHERE id = $4 RETURNING id', // Excluir campos sensíveis
-            [nome, email, tipo, id]
-        );
-
-        if (result.rowCount === 0) {
-            return res.status(404).json({ error: 'Utilizador não encontrado' });
-        }
-
-        res.status(200).json({ message: 'Utilizador atualizado com sucesso' });
-    } catch (error) {
-        console.error('Erro ao atualizar utilizador:', error);
-        res.status(500).json({ error: 'Erro no servidor' });
-    }
-});
-
-// DELETE /utilizadores/:id -> eliminar um utilizador
-app.delete('/utilizadores/:id', async (req, res) => {
-    try {
-        const { id } = req.params; // Obter ID dos parâmetros da rota
-        const result = await pool.query(
-            'DELETE FROM users WHERE id = $1 RETURNING id', // Excluir campos sensíveis
-            [id]
-        );
-
-        if (result.rowCount === 0) {
-            return res.status(404).json({ error: 'Utilizador não encontrado' });
-        }
-
-        res.status(200).json({ message: 'Utilizador eliminado com sucesso' });
-    } catch (error) {
-        console.error('Erro ao eliminar utilizador:', error);
-        res.status(500).json({ error: 'Erro ao eliminar utilizador' });
-    }
-});
-
-// POST /utilizadores/recuperar-pin
-app.post('/utilizadores/recuperar-pin', async (req, res) => {
-    try {
-        const { email } = req.body;
-
-        if (!email) {
-            return res.status(400).json({ error: 'Email é obrigatório' });
-        }
-
-        // Verificar se o utilizador existe
-        const result = await pool.query(
-            'SELECT id, nome FROM users WHERE email = $1',
-            [email]
-        );
-
-        if (result.rows.length === 0) {
-            // Por segurança, não revelar que o email não existe
-            return res.status(200).json({
-                message: 'Se o email existir, receberá um código de recuperação'
+        // Verificar permissões - apenas o próprio utilizador pode atualizar os seus dados
+        if (parseInt(id) !== userIdFromToken) {
+            return res.status(403).json({ 
+                error: 'Acesso negado. Só pode atualizar os seus próprios dados.' 
             });
         }
 
-        const user = result.rows[0];
-
-        // gerar um código de recuperação de 6 dígitos
-        const codigoRecuperacao = Math.floor(100000 + Math.random() * 900000).toString();
-
-        // guarda o código na BD 
-        await pool.query(
-            'UPDATE users SET codigoVerificacao = $1 WHERE id = $2',
-            [codigoRecuperacao, user.id]
-        );
-
-        // simula envio
-        console.log(`Código de recuperação para ${user.nome}(${email}): ${codigoRecuperacao}`);
-        res.status(200).json({
-            message: 'Código de recuperação enviado',
-            codigoRecuperacao: codigoRecuperacao // codigo na consola da API
-        });
-
-    } catch (error) {
-        console.error('Erro na recuperação:', error);
-        res.status(500).json({ error: 'Erro no servidor' });
-    }
-});
-
-// POST /utilizadores/redefinir-pin
-app.post('/utilizadores/redefinir-pin', async (req, res) => {
-    try {
-        const { email, codigoRecuperacao, novoPin } = req.body;
-
-        if (!email || !codigoRecuperacao || !novoPin) {
-            return res.status(400).json({ error: 'Todos os campos são obrigatórios' });
+        // Validação básica - pelo menos um campo para atualizar
+        if (!nome && !email && !telemovel && !nacionalidade && !sexo && !cc && !dataNascimento && !morada) {
+            return res.status(400).json({ 
+                error: 'Pelo menos um campo deve ser fornecido para atualização' 
+            });
         }
 
-        if (String(novoPin).length !== 6) {
-            return res.status(400).json({ error: 'O PIN deve ter 6 dígitos' });
-        }
-
-        // Verificar código de recuperação
-        const result = await pool.query(
-            'SELECT id, codigoVerificacao FROM users WHERE email = $1',
-            [email]
+        // Verificar se o utilizador existe
+        const userExists = await pool.query(
+            'SELECT id FROM users WHERE id = $1',
+            [id]
         );
 
-        if (result.rows.length === 0) {
+        if (userExists.rows.length === 0) {
             return res.status(404).json({ error: 'Utilizador não encontrado' });
         }
 
-        const user = result.rows[0];
+        // Se estiver a tentar atualizar o email, verificar se já existe
+        if (email) {
+            const emailCheck = await pool.query(
+                'SELECT id FROM users WHERE email = $1 AND id != $2',
+                [email, id]
+            );
 
-        if (user.codigoverificacao !== codigoRecuperacao) {
-            return res.status(400).json({ error: 'Código de recuperação inválido' });
+            if (emailCheck.rows.length > 0) {
+                return res.status(400).json({ 
+                    error: 'Email já está em uso por outro utilizador' 
+                });
+            }
         }
 
-        // Hash do novo PIN
-        const salt = await bcrypt.genSalt(10);
-        const hashedPin = await bcrypt.hash(String(novoPin), salt);
+        // Se estiver a tentar atualizar o telemóvel, verificar se já existe
+        if (telemovel) {
+            const phoneCheck = await pool.query(
+                'SELECT id FROM users WHERE telemovel = $1 AND id != $2',
+                [telemovel, id]
+            );
 
-        // Atualizar PIN e limpar código de recuperação
-        await pool.query(
-            'UPDATE users SET pin = $1, codigoVerificacao = NULL WHERE id = $2',
-            [hashedPin, user.id]
-        );
+            if (phoneCheck.rows.length > 0) {
+                return res.status(400).json({ 
+                    error: 'Telemóvel já está em uso por outro utilizador' 
+                });
+            }
 
-        res.status(200).json({ message: 'PIN redefinido com sucesso' });
+            // Validar formato do telemóvel
+            const telemovelRegex = /^\+?[0-9]{9,15}$/;
+            if (!telemovelRegex.test(telemovel)) {
+                return res.status(400).json({
+                    error: 'Número de telemóvel inválido'
+                });
+            }
+        }
+
+        // Construir query dinâmica baseada nos campos fornecidos
+        const updateFields = [];
+        const queryParams = [];
+        let paramCounter = 1;
+
+        if (nome) {
+            updateFields.push(`nome = $${paramCounter++}`);
+            queryParams.push(nome);
+        }
+        if (email) {
+            updateFields.push(`email = $${paramCounter++}`);
+            queryParams.push(email);
+        }
+        if (telemovel) {
+            updateFields.push(`telemovel = $${paramCounter++}`);
+            queryParams.push(telemovel);
+        }
+        if (nacionalidade !== undefined) {
+            updateFields.push(`nacionalidade = $${paramCounter++}`);
+            queryParams.push(nacionalidade);
+        }
+        if (sexo !== undefined) {
+            updateFields.push(`sexo = $${paramCounter++}`);
+            queryParams.push(sexo);
+        }
+        if (cc !== undefined) {
+            updateFields.push(`cc = $${paramCounter++}`);
+            queryParams.push(cc);
+        }
+        if (dataNascimento !== undefined) {
+            updateFields.push(`dataNascimento = $${paramCounter++}`);
+            queryParams.push(dataNascimento);
+        }
+        if (morada !== undefined) {
+            updateFields.push(`morada = $${paramCounter++}`);
+            queryParams.push(morada);
+        }
+
+        // Adicionar ID no final dos parâmetros
+        queryParams.push(id);
+
+        const query = `
+            UPDATE users 
+            SET ${updateFields.join(', ')} 
+            WHERE id = $${paramCounter}
+            RETURNING id, nome, email, telemovel, tipo, nacionalidade, sexo, cc, dataNascimento, morada
+        `;
+
+        const result = await pool.query(query, queryParams);
+
+        // Log para auditoria
+        console.log(`Utilizador ID ${userIdFromToken} atualizou os seus próprios dados (${Object.keys(req.body).join(', ')})`);
+
+        res.status(200).json({ 
+            success: true,
+            message: 'Utilizador atualizado com sucesso',
+            user: result.rows[0]
+        });
 
     } catch (error) {
-        console.error('Erro ao redefinir PIN:', error);
-        res.status(500).json({ error: 'Erro no servidor' });
+        console.error('Erro ao atualizar utilizador:', error);
+        res.status(500).json({ 
+            error: 'Erro no servidor',
+            details: error.message 
+        });
     }
 });
+
 
 // POST /utilizadores/alterar-pin -> altera o PIN do utilizador autenticado
 app.post('/utilizadores/alterar-pin', authenticateToken, async (req, res) => {
@@ -879,7 +928,7 @@ app.post('/utilizadores/logout', authenticateToken, async (req, res) => {
 
 // ROTAS DE ANIMAIS==============================================
 
-// POST /animais -> cria novo animal
+// POST /animais -> cria novo animal 
 app.post('/animais', authenticateToken, async (req, res) => {
     try {
         const { nome, especie, raca, dataNascimento, numeroChip } = req.body;
@@ -892,15 +941,38 @@ app.post('/animais', authenticateToken, async (req, res) => {
         // Gerar código único VT-XXXXXX
         const codigoUnico = 'VT-' + Math.floor(100000 + Math.random() * 900000);
 
-        const result = await pool.query(
+        // Inserir animal
+        const insertResult = await pool.query(
             `INSERT INTO animais
-            (tutorId, nome, especie, raca, dataNascimento, numeroChip, codigoUnico)
-                VALUES($1, $2, $3, $4, $5, $6, $7)
-                RETURNING * `,
+             (tutorId, nome, especie, raca, dataNascimento, numeroChip, codigoUnico)
+             VALUES($1, $2, $3, $4, $5, $6, $7)
+             RETURNING id`,
             [tutorId, nome, especie, raca, dataNascimento, numeroChip, codigoUnico]
         );
 
-        res.status(201).json(result.rows[0]);
+        const novoAnimalId = insertResult.rows[0].id;
+
+        // Buscar animal completo com dados do tutor
+        const animalResult = await pool.query(
+            `SELECT a.*, 
+                    u.nome as tutorNome, 
+                    u.email as tutorEmail,
+                    u.telemovel as tutorTelemovel
+             FROM animais a
+             JOIN users u ON a.tutorId = u.id
+             WHERE a.id = $1`,
+            [novoAnimalId]
+        );
+
+        const novoAnimal = animalResult.rows[0];
+
+        console.log(`Animal criado: ${nome} (ID: ${novoAnimalId}) para tutor ${tutorId}`);
+
+        res.status(201).json({
+            success: true,
+            message: 'Animal criado com sucesso',
+            animal: novoAnimal
+        });
 
     } catch (error) {
         console.error('Erro ao criar animal:', error);
@@ -918,14 +990,26 @@ app.get('/utilizadores/:userId/animais', authenticateToken, async (req, res) => 
             return res.status(403).json({ error: 'Não autorizado' });
         }
 
+        // Buscar animais com dados do tutor
         const result = await pool.query(
-            `SELECT * FROM animais 
-                WHERE tutorId = $1 
-                ORDER BY nome`,
+            `SELECT a.*, 
+                    u.nome as tutorNome, 
+                    u.email as tutorEmail,
+                    u.telemovel as tutorTelemovel
+             FROM animais a
+             JOIN users u ON a.tutorId = u.id
+             WHERE a.tutorId = $1 
+             ORDER BY a.nome`,
             [userId]
         );
 
-        res.status(200).json(result.rows);
+        console.log(`Utilizador ${req.user.id} acedeu aos ${result.rows.length} animais do tutor ${userId}`);
+
+        res.status(200).json({
+            success: true,
+            count: result.rows.length,
+            animais: result.rows
+        });
 
     } catch (error) {
         console.error('Erro ao obter animais:', error);
@@ -1000,23 +1084,38 @@ app.put('/animais/:id', authenticateToken, async (req, res) => {
         }
 
         // Atualiza o animal
-        const result = await pool.query(`
-            UPDATE animais 
-            SET nome = $1,
-                especie = $2,
-                raca = COALESCE($3, raca),
-                dataNascimento = COALESCE($4, dataNascimento),
-                numeroChip = COALESCE($5, numeroChip)
-            WHERE id = $6
-            RETURNING *
-        `, [nome, especie, raca, dataNascimento, numeroChip, parseInt(id)]);
+        const updateResult = await pool.query(
+            `UPDATE animais 
+             SET nome = $1,
+                 especie = $2,
+                 raca = COALESCE($3, raca),
+                 dataNascimento = COALESCE($4, dataNascimento),
+                 numeroChip = COALESCE($5, numeroChip)
+             WHERE id = $6
+             RETURNING id`,
+            [nome, especie, raca, dataNascimento, numeroChip, parseInt(id)]
+        );
+
+        // Buscar animal completo com dados do tutor
+        const animalResult = await pool.query(
+            `SELECT a.*, 
+                    u.nome as tutorNome, 
+                    u.email as tutorEmail,
+                    u.telemovel as tutorTelemovel
+             FROM animais a
+             JOIN users u ON a.tutorId = u.id
+             WHERE a.id = $1`,
+            [updateResult.rows[0].id]
+        );
+
+        const animalAtualizado = animalResult.rows[0];
 
         console.log(`Animal ID ${id} atualizado por utilizador ${userId}`);
 
         res.status(200).json({
             success: true,
             message: 'Animal atualizado com sucesso',
-            animal: result.rows[0]
+            animal: animalAtualizado
         });
 
     } catch (error) {
@@ -1123,79 +1222,141 @@ app.post('/animais/:animalId/foto', authenticateToken, upload.single('foto'),  /
 // POST /consultas -> marca nova consulta
 app.post('/consultas', authenticateToken, async (req, res) => {
     try {
-        const { animalId, clinicaId, veterinarioId, data, hora, motivo } = req.body; // obtem dados do corpo da requisição
-        const userId = req.user.id; // obtem o ID do utilizador autenticado
+        // o corpo do pedido corresponde ao modelo NovaConsulta do android
+        const { animalId, clinicaId, veterinarioId, data, motivo } = req.body;
+        const userId = req.user.id;
 
-        // verifica se já existe uma consulta marcada para o mesmo veterinário na mesma data e hora
-        const consultaConflito = await pool.query(
-            `SELECT * FROM consultas 
-                    WHERE veterinarioId = $1 
-                    AND data = $2 
-                    AND hora = $3 
-                    AND estado != 'cancelada'`, // não conta consultas canceladas
-            [veterinarioId, data, hora]
-        );
-
-        // se existir conflito, retorna erro
-        if (consultaConflito.rows.length > 0) {
-            return res.status(409).json({
-                error: 'Já existe uma consulta marcada para este veterinário no mesmo horário'
+        // validacao dos campos obrigatorios
+        if (!animalId || !clinicaId || !veterinarioId || !data) {
+            return res.status(400).json({
+                error: 'todos os campos sao obrigatorios: animalId, clinicaId, veterinarioId, data'
             });
         }
 
-        // validação dos campos obrigatórios
-        if (!animalId || !clinicaId || !veterinarioId || !data || !hora) {
+        // extrai a data e a hora da string iso (ex: "2024-08-15T10:00:00")
+        const fullDate = new Date(data);
+        
+        // verifica se a data é valida
+        if (isNaN(fullDate.getTime())) {
             return res.status(400).json({
-                error: 'Todos os campos são obrigatórios'
+                error: 'formato de data invalido. use iso 8601 (ex: 2024-08-15T10:00:00)'
             });
         }
 
-        const dataConsulta = new Date(data); // converte a data para objeto Date
-        const hoje = new Date(); // data atual
-        hoje.setHours(0, 0, 0, 0); // zera horas para comparar só a data
-        // verifica se a data da consulta não é no passado
-        if (dataConsulta < hoje) {
-            return res.status(400).json({
-                error: 'A data da consulta não pode ser no passado'
-            });
-        }
+        const dataSql = fullDate.toISOString().split('T')[0]; // "2024-08-15" 
+        const horaSql = fullDate.toTimeString().split(' ')[0]; // "10:00:00"
 
-        // verifica se o veterinário pertence à clínica selecionada
-        const verificaVeterinario = await pool.query(
-            'SELECT * FROM veterinarios WHERE id = $1 AND clinicaId = $2',
-            [veterinarioId, clinicaId]
-        );
-        if (verificaVeterinario.rows.length === 0) {
+        // verifica se a data da consulta nao e no passado
+        const hoje = new Date();
+        hoje.setHours(0, 0, 0, 0);
+        
+        if (fullDate < hoje) {
             return res.status(400).json({
-                error: 'Este veterinário não pertence à clínica selecionada'
+                error: 'a data da consulta nao pode ser no passado'
             });
         }
 
         // verifica se o animal pertence ao utilizador
         const animalCheck = await pool.query(
-            'SELECT tutorId FROM animais WHERE id = $1',
+            'SELECT id, nome, tutorId FROM animais WHERE id = $1',
             [animalId]
         );
 
-        if (animalCheck.rows.length === 0 || animalCheck.rows[0].tutorid !== userId) {
-            return res.status(403).json({ error: 'Animal não encontrado ou não autorizado' });
+        if (animalCheck.rows.length === 0) {
+            return res.status(404).json({ error: 'animal nao encontrado' });
         }
 
-        // insere a nova consulta na BD
-        const result = await pool.query(
-            `INSERT INTO consultas
-                (userId, animalId, clinicaId, veterinarioId, data, hora, motivo)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
-                RETURNING *`,
-            [userId, animalId, clinicaId, veterinarioId, data, hora, motivo]
+        if (animalCheck.rows[0].tutorid !== userId) {
+            console.log(`tentativa nao autorizada: user ${userId} tentou marcar consulta para animal ${animalId} de outro tutor`);
+            return res.status(403).json({ 
+                error: 'nao autorizado. este animal nao lhe pertence' 
+            });
+        }
+
+        // verifica se o veterinario pertence a clinica selecionada
+        const veterinarioCheck = await pool.query(
+            'SELECT id, nome, clinicaId FROM veterinarios WHERE id = $1 AND clinicaId = $2',
+            [veterinarioId, clinicaId]
         );
 
-        res.status(201).json(result.rows[0]);
+        if (veterinarioCheck.rows.length === 0) {
+            return res.status(400).json({
+                error: 'veterinario nao encontrado ou nao pertence a clinica selecionada'
+            });
+        }
+
+        // verifica se a clinica existe
+        const clinicaCheck = await pool.query(
+            'SELECT id, nome FROM clinicas WHERE id = $1',
+            [clinicaId]
+        );
+
+        if (clinicaCheck.rows.length === 0) {
+            return res.status(404).json({ error: 'clinica nao encontrada' });
+        }
+
+        // verifica se ja existe uma consulta marcada para o mesmo veterinario na mesma data e hora
+        const consultaConflito = await pool.query(
+            `SELECT * FROM consultas 
+             WHERE veterinarioId = $1 
+             AND data = $2 
+             AND hora = $3 
+             AND estado != 'cancelada'`,
+            [veterinarioId, dataSql, horaSql]
+        );
+
+        if (consultaConflito.rows.length > 0) {
+            return res.status(409).json({
+                error: 'ja existe uma consulta marcada para este veterinario no mesmo horario'
+            });
+        }
+
+        // insercao na base de dados
+        const insertResult = await pool.query(
+            `INSERT INTO consultas 
+             (userId, animalId, clinicaId, veterinarioId, data, hora, motivo, estado) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'marcada')
+             RETURNING id`,
+            [userId, animalId, clinicaId, veterinarioId, dataSql, horaSql, motivo]
+        );
+
+        const novaConsultaId = insertResult.rows[0].id;
+
+        // busca a consulta completa para devolver a app
+        const finalResult = await pool.query(`
+            SELECT c.*, 
+                   cli.nome as clinicanome, 
+                   vet.nome as veterinarionome, 
+                   a.nome as animalnome,
+                   a.especie as animalespecie
+            FROM consultas c
+            JOIN clinicas cli ON c.clinicaId = cli.id
+            JOIN veterinarios vet ON c.veterinarioId = vet.id
+            LEFT JOIN animais a ON c.animalId = a.id
+            WHERE c.id = $1
+        `, [novaConsultaId]);
+
+        const consultaCriada = finalResult.rows[0];
+
+        // log da operacao
+        console.log(`consulta marcada - id: ${novaConsultaId}, user: ${userId}, animal: ${consultaCriada.animalnome}, data: ${consultaCriada.data}`);
+
+        // responde com o objeto completo
+        res.status(201).json({
+            success: true,
+            message: 'consulta marcada com sucesso',
+            consulta: consultaCriada
+        });
+
     } catch (error) {
-        console.error('Erro ao marcar consulta:', error);
-        res.status(500).json({ error: 'Erro no servidor' });
+        console.error('erro ao marcar consulta:', error);
+        res.status(500).json({ 
+            error: 'erro no servidor',
+            message: 'nao foi possivel marcar a consulta. tente novamente.'
+        });
     }
 });
+
 
 // GET /clinicas -> obtem todas as clínicas
 app.get('/clinicas', async (req, res) => {
@@ -1234,24 +1395,44 @@ app.get('/clinicas/:clinicaId/veterinarios', async (req, res) => {
     }
 });
 
-
-// GET /consultas/:userId -> consultas de um utilizador
+// GET /consultas/user/:userId -> consultas de um utilizador 
 app.get('/consultas/user/:userId', authenticateToken, async (req, res) => {
     try {
+        const { userId } = req.params;
+        const requestingUser = req.user; // Utilizador que faz o pedido (do token)
 
-        const { userId } = req.params; // obtem o ID do utilizador dos parâmetros da rota
+        // VERIFICAÇÃO DE PERMISSÃO CRÍTICA
+        // 1. O utilizador só pode ver as suas próprias consultas
+        // 2. Veterinários podem ver consultas de qualquer utilizador
+        if (parseInt(userId) !== requestingUser.id && requestingUser.tipo !== 'veterinario') {
+            console.warn(`Tentativa de acesso não autorizado: Utilizador ${requestingUser.id} tentou aceder consultas do utilizador ${userId}`);
+            return res.status(403).json({ 
+                error: 'Acesso não autorizado. Só pode ver as suas próprias consultas.' 
+            });
+        }
 
         const result = await pool.query(`
-                SELECT c.*, cli.nome as clinicanome, vet.nome as veterinarionome, a.nome as animalnome, a.especie as animalespecie  
-                FROM consultas c
-                JOIN clinicas cli ON c.clinicaId = cli.id
-                JOIN veterinarios vet ON c.veterinarioId = vet.id
-                LEFT JOIN animais a ON c.animalId = a.id 
-                WHERE c.userId = $1 
-                ORDER BY c.data, c.hora
-            `, [userId]);
+            SELECT c.*, 
+                   cli.nome as clinicanome, 
+                   vet.nome as veterinarionome, 
+                   a.nome as animalnome,
+                   a.especie as animalespecie
+            FROM consultas c
+            JOIN clinicas cli ON c.clinicaId = cli.id
+            JOIN veterinarios vet ON c.veterinarioId = vet.id
+            LEFT JOIN animais a ON c.animalId = a.id
+            WHERE c.userId = $1
+            ORDER BY c.data DESC, c.hora DESC
+        `, [userId]);
 
-        res.status(200).json(result.rows);
+        console.log(`Utilizador ${requestingUser.id} (${requestingUser.tipo}) acedeu às consultas do utilizador ${userId} - ${result.rows.length} consultas encontradas`);
+
+        res.status(200).json({
+            success: true,
+            count: result.rows.length,
+            consultas: result.rows
+        });
+
     } catch (error) {
         console.error('Erro ao obter consultas:', error);
         res.status(500).json({ error: 'Erro no servidor' });
@@ -1261,26 +1442,234 @@ app.get('/consultas/user/:userId', authenticateToken, async (req, res) => {
 // DELETE /consultas/:id -> cancela uma consulta
 app.delete('/consultas/:id', authenticateToken, async (req, res) => {
     try {
-        const { id } = req.params; // obtem o ID da consulta dos parâmetros da rota
-        const result = await pool.query(
-            'DELETE FROM consultas WHERE id = $1 RETURNING id', // retorna o ID da consulta eliminada
-            [id]
-        );
+        const { id } = req.params;
+        const userId = req.user.id;
+        const userTipo = req.user.tipo;
 
-        // se não encontrar a consulta, retorna erro
-        if (result.rowCount === 0) {
+        // Primeiro, verifica se a consulta existe e obtém detalhes para auditoria
+        const consultaCheck = await pool.query(`
+            SELECT c.id, c.userId, c.data, c.hora, 
+                   a.nome as animal_nome,
+                   cli.nome as clinica_nome
+            FROM consultas c
+            LEFT JOIN animais a ON c.animalId = a.id
+            LEFT JOIN clinicas cli ON c.clinicaId = cli.id
+            WHERE c.id = $1
+        `, [id]);
+
+        if (consultaCheck.rows.length === 0) {
+            console.warn(`Tentativa de cancelar consulta inexistente ID ${id} por utilizador ${userId}`);
             return res.status(404).json({ error: 'Consulta não encontrada' });
         }
 
+        const consulta = consultaCheck.rows[0];
+
+        // VERIFICAÇÃO DE PERMISSÃO CRÍTICA
+        // Apenas o dono da consulta pode cancelar (ou veterinários, se aplicável)
+        if (consulta.userid !== userId && userTipo !== 'veterinario') {
+            console.warn(`Tentativa de acesso não autorizado: Utilizador ${userId} (${userTipo}) tentou cancelar consulta ${id} do utilizador ${consulta.userid}`);
+            
+            // Log mais detalhado para auditoria
+            console.warn(`   Detalhes da tentativa: Consulta ID ${id}, Data: ${consulta.data}, Animal: ${consulta.animal_nome || 'N/A'}`);
+            
+            return res.status(403).json({ 
+                error: 'Não autorizado a cancelar esta consulta',
+                message: 'Apenas o tutor que marcou a consulta pode cancelá-la'
+            });
+        }
+
+        // Opcional: Verificar se a consulta já passou
+        const dataConsulta = new Date(consulta.data);
+        const hoje = new Date();
+        hoje.setHours(0, 0, 0, 0);
+        
+        if (dataConsulta < hoje) {
+            return res.status(400).json({ 
+                error: 'Não é possível cancelar consultas que já ocorreram',
+                message: 'Consultas passadas não podem ser canceladas'
+            });
+        }
+
+        // Opcional: Verificar se a consulta já foi realizada ou cancelada
+        // Se tivesse um campo 'estado' na tabela consultas, verificaríamos aqui
+
+        // Se a permissão estiver correta, apaga a consulta
+        const result = await pool.query(
+            'DELETE FROM consultas WHERE id = $1 RETURNING id',
+            [id]
+        );
+
+        // LOG DE AUDITORIA DETALHADO
+        console.log(`Consulta cancelada - ID: ${id}`);
+        console.log(`Cancelada por: Utilizador ${userId} (${userTipo})`);
+ 
+
+        // Resposta de sucesso
         res.status(200).json({
+            success: true,
             message: 'Consulta cancelada com sucesso',
-            consultaId: result.rows[0].id
+            consultaId: result.rows[0].id,
+            detalhes: {
+                data: consulta.data,
+                hora: consulta.hora,
+                clinica: consulta.clinica_nome,
+                animal: consulta.animal_nome
+            }
         });
+
     } catch (error) {
         console.error('Erro ao cancelar consulta:', error);
-        res.status(500).json({ error: 'Erro no servidor' });
+        res.status(500).json({ 
+            error: 'Erro no servidor',
+            message: 'Não foi possível cancelar a consulta. Tente novamente mais tarde.'
+        });
     }
 });
+
+// PUT /consultas/:id -> atualiza uma consulta 
+app.put('/consultas/:id', authenticateToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = req.user.id;
+
+        // 1. verificar se a consulta existe e pertence ao utilizador
+        const originalConsultaQuery = await pool.query(
+            'SELECT * FROM consultas WHERE id = $1',
+            [id]
+        );
+
+        if (originalConsultaQuery.rows.length === 0) {
+            return res.status(404).json({ error: 'consulta nao encontrada' });
+        }
+
+        const originalConsulta = originalConsultaQuery.rows[0];
+        
+        // verificacao de permissao - apenas o dono pode editar
+        if (originalConsulta.userid !== userId) {
+            console.log(`tentativa nao autorizada: user ${userId} tentou editar consulta ${id} do user ${originalConsulta.userid}`);
+            return res.status(403).json({ error: 'acesso nao autorizado' });
+        }
+
+        // 2. obter dados para atualizar (do modelo da aplicacao)
+        const { motivo, data, clinicaId, veterinarioId, observacoes } = req.body;
+
+        // manter valores originais se nao forem fornecidos novos
+        const novoMotivo = motivo !== undefined ? motivo : originalConsulta.motivo;
+        const novaClinicaId = clinicaId !== undefined ? clinicaId : originalConsulta.clinicaid;
+        const novoVeterinarioId = veterinarioId !== undefined ? veterinarioId : originalConsulta.veterinarioid;
+        const novasObservacoes = observacoes !== undefined ? observacoes : originalConsulta.observacoes;
+
+        let novaDataSql = originalConsulta.data;
+        let novaHoraSql = originalConsulta.hora;
+
+        // se uma nova data for fornecida, processa-la
+        if (data) {
+            const fullDate = new Date(data);
+            
+            // validar formato da data
+            if (isNaN(fullDate.getTime())) {
+                return res.status(400).json({
+                    error: 'formato de data invalido. use iso 8601'
+                });
+            }
+
+            // verificar se a data nao e no passado
+            const hoje = new Date();
+            hoje.setHours(0, 0, 0, 0);
+            
+            if (fullDate < hoje) {
+                return res.status(400).json({
+                    error: 'a data da consulta nao pode ser no passado'
+                });
+            }
+
+            novaDataSql = fullDate.toISOString().split('T')[0];
+            novaHoraSql = fullDate.toTimeString().split(' ')[0];
+        }
+
+        // 3. validacoes se algo importante mudou
+        const dataMudou = data && (novaDataSql !== originalConsulta.data || novaHoraSql !== originalConsulta.hora);
+        const veterinarioMudou = veterinarioId && novoVeterinarioId !== originalConsulta.veterinarioid;
+        const clinicaMudou = clinicaId && novaClinicaId !== originalConsulta.clinicaid;
+
+        // se o veterinario mudou, verificar se pertence a nova clinica
+        if (veterinarioMudou || clinicaMudou) {
+            const veterinarioCheck = await pool.query(
+                'SELECT id FROM veterinarios WHERE id = $1 AND clinicaId = $2',
+                [novoVeterinarioId, novaClinicaId]
+            );
+
+            if (veterinarioCheck.rows.length === 0) {
+                return res.status(400).json({
+                    error: 'veterinario nao encontrado ou nao pertence a clinica selecionada'
+                });
+            }
+        }
+
+        // se o horario ou o veterinario mudaram, verificar conflitos
+        if (dataMudou || veterinarioMudou) {
+            const conflitoQuery = await pool.query(
+                `SELECT id FROM consultas 
+                 WHERE veterinarioId = $1 
+                 AND data = $2 
+                 AND hora = $3 
+                 AND estado != 'cancelada' 
+                 AND id != $4`,
+                [novoVeterinarioId, novaDataSql, novaHoraSql, id]
+            );
+
+            if (conflitoQuery.rows.length > 0) {
+                return res.status(409).json({ 
+                    error: 'horario indisponivel para este veterinario' 
+                });
+            }
+        }
+
+        // 4. executar a atualizacao
+        await pool.query(
+            `UPDATE consultas SET
+                motivo = $1,
+                data = $2,
+                hora = $3,
+                clinicaId = $4,
+                veterinarioId = $5,
+                observacoes = $6
+             WHERE id = $7`,
+            [novoMotivo, novaDataSql, novaHoraSql, novaClinicaId, novoVeterinarioId, novasObservacoes, id]
+        );
+
+        // 5. devolver a consulta completa e atualizada
+        const finalResult = await pool.query(`
+            SELECT c.*, 
+                   cli.nome as clinicanome, 
+                   vet.nome as veterinarionome, 
+                   a.nome as animalnome,
+                   a.especie as animalespecie
+            FROM consultas c
+            JOIN clinicas cli ON c.clinicaId = cli.id
+            JOIN veterinarios vet ON c.veterinarioId = vet.id
+            LEFT JOIN animais a ON c.animalId = a.id
+            WHERE c.id = $1
+        `, [id]);
+
+        console.log(`consulta ${id} atualizada pelo utilizador ${userId}`);
+
+        res.status(200).json({
+            success: true,
+            message: 'consulta atualizada com sucesso',
+            consulta: finalResult.rows[0]
+        });
+
+    } catch (error) {
+        console.error('erro ao atualizar consulta:', error);
+        res.status(500).json({ 
+            error: 'erro no servidor',
+            details: error.message 
+        });
+    }
+});
+
+
 
 // ROTAS DE VACINAS==============================================
 
@@ -1406,83 +1795,125 @@ app.get('/animais/:animalId/vacinas/agendadas', authenticateToken, async (req, r
     }
 });
 
-
-// POST /vacinas/agendar -> agenda nova vacina
+// POST /vacinas/agendar -> agenda nova vacina (compativel)
 app.post('/vacinas/agendar', authenticateToken, async (req, res) => {
     try {
         const { animalId, tipo_vacina_id, data_agendada, clinicaId, veterinarioId, observacoes } = req.body;
         const userId = req.user.id;
 
-        // validação dos campos obrigatórios
+        // validacao dos campos obrigatorios
         if (!animalId || !tipo_vacina_id || !data_agendada) {
             return res.status(400).json({
-                error: 'animalId, tipo_vacina_id e data_agendada são obrigatórios'
+                error: 'animalId, tipo_vacina_id e data_agendada sao obrigatorios'
             });
         }
 
         // verifica se o animal pertence ao utilizador
         const animalCheck = await pool.query(
-            'SELECT id, nome FROM animais WHERE id = $1 AND tutorId = $2',
+            'SELECT id, nome, especie, dataNascimento FROM animais WHERE id = $1 AND tutorId = $2',
             [animalId, userId]
         );
 
-        // se não encontrar o animal ou não pertencer ao utilizador
         if (animalCheck.rows.length === 0) {
-            return res.status(404).json({
-                error: 'Animal não encontrado ou não pertence ao utilizador'
+            return res.status(404).json({ 
+                error: 'animal nao encontrado ou nao pertence ao utilizador' 
             });
         }
 
-        // obtem informações do tipo de vacina
+        const animal = animalCheck.rows[0];
+
+        // verifica se o tipo de vacina existe
         const tipoVacinaResult = await pool.query(
-            'SELECT * FROM tipos_vacina WHERE id = $1',
+            'SELECT id, nome, descricao FROM tipos_vacina WHERE id = $1',
             [tipo_vacina_id]
         );
 
-        // se não encontrar o tipo de vacina
         if (tipoVacinaResult.rows.length === 0) {
-            return res.status(404).json({
-                error: 'Tipo de vacina não encontrado'
+            return res.status(404).json({ 
+                error: 'tipo de vacina nao encontrado' 
             });
         }
 
         const tipoVacina = tipoVacinaResult.rows[0];
 
-        // converte a data agendada para objeto Date
+        // valida a data agendada
         const dataAgendadaObj = new Date(data_agendada);
         const hoje = new Date();
 
-        // verifica se a data não é no passado
+        if (isNaN(dataAgendadaObj.getTime())) {
+            return res.status(400).json({
+                error: 'formato de data invalido'
+            });
+        }
+
         if (dataAgendadaObj < hoje) {
             return res.status(400).json({
-                error: 'A data agendada não pode ser no passado'
+                error: 'a data agendada nao pode ser no passado'
             });
+        }
+
+        // se clinicaId foi fornecido, verifica se existe
+        if (clinicaId) {
+            const clinicaCheck = await pool.query(
+                'SELECT id, nome FROM clinicas WHERE id = $1',
+                [clinicaId]
+            );
+            if (clinicaCheck.rows.length === 0) {
+                return res.status(404).json({ 
+                    error: 'clinica nao encontrada' 
+                });
+            }
+        }
+
+        // se veterinarioId foi fornecido, verifica se existe
+        if (veterinarioId) {
+            const vetCheck = await pool.query(
+                'SELECT id, nome FROM veterinarios WHERE id = $1',
+                [veterinarioId]
+            );
+            if (vetCheck.rows.length === 0) {
+                return res.status(404).json({ 
+                    error: 'veterinario nao encontrado' 
+                });
+            }
         }
 
         // insere a vacina agendada
         const result = await pool.query(
-            `INSERT INTO vacinas
-            (animalId, tipo, tipo_vacina_id, data_agendada, clinicaId, veterinarioId, observacoes, estado)
-                VALUES($1, $2, $3, $4, $5, $6, $7, 'agendada')
-                RETURNING * `,
+            `INSERT INTO vacinas 
+             (animalId, tipo, tipo_vacina_id, data_agendada, clinicaId, veterinarioId, observacoes, estado, notificado)
+             VALUES($1, $2, $3, $4, $5, $6, $7, 'agendada', false)
+             RETURNING *`,
             [animalId, tipoVacina.nome, tipo_vacina_id, data_agendada, clinicaId, veterinarioId, observacoes]
         );
 
         const vacinaAgendada = result.rows[0];
 
-        // procura dados do animal para a resposta
-        const animal = animalCheck.rows[0];
+        // log da operacao
+        console.log(`vacina agendada - id: ${vacinaAgendada.id}, animal: ${animal.nome}, data: ${data_agendada}`);
 
+        // devolve a resposta completa que a app espera
         res.status(201).json({
             success: true,
-            message: 'Vacina agendada com sucesso'
+            message: 'vacina agendada com sucesso',
+            vacina: vacinaAgendada,
+            animal: {
+                id: animal.id,
+                nome: animal.nome,
+                especie: animal.especie
+            },
+            tipo_vacina: {
+                id: tipoVacina.id,
+                nome: tipoVacina.nome,
+                descricao: tipoVacina.descricao
+            }
         });
 
     } catch (error) {
-        console.error('Erro ao agendar vacina:', error);
-        res.status(500).json({
-            error: 'Erro no servidor',
-            detalhes: error.message
+        console.error('erro ao agendar vacina:', error);
+        res.status(500).json({ 
+            error: 'erro no servidor',
+            detalhes: error.message 
         });
     }
 });
@@ -1622,62 +2053,115 @@ app.get('/vacinas/tipos', async (req, res) => {
     }
 });
 
-// Rota para marcar vacina como realizada
+// post /vacinas/:id/realizada -> marca vacina como realizada
 app.post('/vacinas/:id/realizada', authenticateToken, async (req, res) => {
     try {
         const { id } = req.params;
-        const { dataAplicacao, lote, veterinario, observacoes } = req.body;
+        // obtem os dados do body conforme enviado pela app
+        const { dataAplicacao, lote, veterinarioId, observacoes } = req.body;
         const userId = req.user.id;
 
-        // verifica se a vacina existe e pertence ao utilizador
+        // verificar se a vacina existe e pertence ao utilizador
         const vacinaCheck = await pool.query(`
-            SELECT v.*, a.tutorId 
-            FROM vacinas v
-            JOIN animais a ON v.animalId = a.id
+            SELECT v.*, a.tutorId, a.nome as animal_nome 
+            FROM vacinas v 
+            JOIN animais a ON v.animalId = a.id 
             WHERE v.id = $1
-            `, [parseInt(id)]);
+        `, [parseInt(id)]);
 
         if (vacinaCheck.rows.length === 0) {
-            return res.status(404).json({ error: 'Vacina não encontrada' });
+            return res.status(404).json({ 
+                error: 'vacina nao encontrada' 
+            });
         }
 
         const vacina = vacinaCheck.rows[0];
 
+        // verificacao de permissao - apenas o tutor pode marcar como realizada
         if (vacina.tutorid !== userId) {
-            return res.status(403).json({
-                error: 'Não autorizado'
+            console.log(`tentativa nao autorizada: user ${userId} tentou marcar vacina ${id} do user ${vacina.tutorid}`);
+            return res.status(403).json({ 
+                error: 'nao autorizado' 
             });
         }
 
-        // atualiza vacina como realizada
+        // verificar se a vacina ja foi realizada
+        if (vacina.estado === 'realizada') {
+            return res.status(400).json({
+                error: 'vacina ja foi marcada como realizada anteriormente'
+            });
+        }
+
+        // validar a data de aplicacao se for fornecida
+        let dataAplicacaoSql = dataAplicacao;
+        if (dataAplicacao) {
+            const dataObj = new Date(dataAplicacao);
+            if (isNaN(dataObj.getTime())) {
+                return res.status(400).json({
+                    error: 'formato de data de aplicacao invalido'
+                });
+            }
+        }
+
+        // se veterinarioId foi fornecido, verificar se existe
+        if (veterinarioId) {
+            const vetCheck = await pool.query(
+                'SELECT id, nome FROM veterinarios WHERE id = $1',
+                [veterinarioId]
+            );
+            if (vetCheck.rows.length === 0) {
+                return res.status(404).json({
+                    error: 'veterinario nao encontrado'
+                });
+            }
+        }
+
+        // preparar as observacoes, adicionando o lote se ele existir
+        let observacoesFinais = observacoes || vacina.observacoes || '';
+        
+        if (lote) {
+            // adiciona informacao do lote as observacoes
+            const prefixo = observacoesFinais ? '\n' : '';
+            observacoesFinais = `lote: ${lote}${prefixo}${observacoesFinais}`;
+        }
+
+        // query corrigida com os parametros corretos
         const result = await pool.query(`
             UPDATE vacinas 
             SET estado = 'realizada',
-            dataAplicacao = COALESCE($1, CURRENT_DATE),
-            lote = COALESCE($2, lote),
-            veterinario = COALESCE($3, veterinario),
-            observacoes = COALESCE($4, observacoes)
-            WHERE id = $5
-            RETURNING *
-            `, [dataAplicacao, lote, veterinario, observacoes, parseInt(id)]);
+                dataAplicacao = COALESCE($1, CURRENT_DATE),
+                veterinarioId = COALESCE($2, veterinarioId),
+                observacoes = $3
+            WHERE id = $4
+            RETURNING *`,
+            // parametros na ordem correta
+            [
+                dataAplicacaoSql,     // $1 - dataAplicacao
+                veterinarioId,        // $2 - veterinarioId
+                observacoesFinais,    // $3 - observacoes
+                parseInt(id)          // $4 - id
+            ]
+        );
 
-        console.log(`Vacina ID ${id} marcada como realizada por utilizador ${userId}`);
+        const vacinaAtualizada = result.rows[0];
 
+        console.log(`vacina ${id} marcada como realizada - animal: ${vacina.animal_nome}, user: ${userId}`);
+
+        // devolver a vacina atualizada
         res.status(200).json({
             success: true,
-            mensagem: 'Vacina marcada como realizada',
-            vacina: result.rows[0]
+            mensagem: 'vacina marcada como realizada com sucesso',
+            vacina: vacinaAtualizada
         });
 
     } catch (error) {
-        console.error('Erro ao marcar vacina como realizada:', error);
-        res.status(500).json({
-            error: 'Erro no servidor',
-            detalhes: error.message
+        console.error('erro ao marcar vacina como realizada:', error);
+        res.status(500).json({ 
+            error: 'erro no servidor', 
+            detalhes: error.message 
         });
     }
 });
-
 
 
 // ROTAS DE EXAMES==============================================
@@ -1846,21 +2330,21 @@ app.post('/exames/:id/foto', authenticateToken, upload.single('foto'), async (re
     }
 });
 
-// PUT /exames/:id -> atualiza um exame existente
+// PUT /exames/:id -> atualiza um exame existente 
 app.put('/exames/:id', authenticateToken, async (req, res) => {
     try {
         const { id } = req.params;
         const { dataExame, clinicaId, veterinarioId, resultado, observacoes, tipo_exame_id } = req.body;
         const userId = req.user.id;
 
-        // Validação básica
+        // validacao basica
         if (!dataExame) {
             return res.status(400).json({
-                error: 'dataExame é obrigatória'
+                error: 'dataExame e obrigatoria'
             });
         }
 
-        // Verifica se o exame existe e pertence ao utilizador
+        // verifica se o exame existe e pertence ao utilizador
         const exameCheck = await pool.query(`
             SELECT e.*, a.tutorId 
             FROM exames e
@@ -1870,20 +2354,21 @@ app.put('/exames/:id', authenticateToken, async (req, res) => {
 
         if (exameCheck.rows.length === 0) {
             return res.status(404).json({
-                error: 'Exame não encontrado'
+                error: 'exame nao encontrado'
             });
         }
 
         const exame = exameCheck.rows[0];
 
-        // Verifica permissões
+        // verifica permissoes
         if (exame.tutorid !== userId) {
+            console.log(`tentativa nao autorizada: user ${userId} tentou editar exame ${id} do user ${exame.tutorid}`);
             return res.status(403).json({
-                error: 'Não autorizado a editar este exame'
+                error: 'nao autorizado a editar este exame'
             });
         }
 
-        // Verifica se o tipo de exame existe (se foi fornecido)
+        // verifica se o tipo de exame existe (se foi fornecido)
         let tipoNome = exame.tipo_exame_id;
         if (tipo_exame_id) {
             const tipoCheck = await pool.query(
@@ -1892,13 +2377,13 @@ app.put('/exames/:id', authenticateToken, async (req, res) => {
             );
             if (tipoCheck.rows.length === 0) {
                 return res.status(400).json({
-                    error: 'Tipo de exame não encontrado'
+                    error: 'tipo de exame nao encontrado'
                 });
             }
             tipoNome = tipoCheck.rows[0].nome;
         }
 
-        // Verifica se clínica existe (se foi fornecida)
+        // verifica se clinica existe (se foi fornecida)
         if (clinicaId) {
             const clinicaCheck = await pool.query(
                 'SELECT nome FROM clinicas WHERE id = $1',
@@ -1906,12 +2391,12 @@ app.put('/exames/:id', authenticateToken, async (req, res) => {
             );
             if (clinicaCheck.rows.length === 0) {
                 return res.status(400).json({
-                    error: 'Clínica não encontrada'
+                    error: 'clinica nao encontrada'
                 });
             }
         }
 
-        // Verifica se veterinário existe (se foi fornecido)
+        // verifica se veterinario existe (se foi fornecido)
         if (veterinarioId) {
             const clinicaIdToCheck = clinicaId || exame.clinicaid;
             const vetCheck = await pool.query(
@@ -1920,9 +2405,17 @@ app.put('/exames/:id', authenticateToken, async (req, res) => {
             );
             if (vetCheck.rows.length === 0) {
                 return res.status(400).json({
-                    error: 'Veterinário não encontrado ou não pertence a esta clínica'
+                    error: 'veterinario nao encontrado ou nao pertence a esta clinica'
                 });
             }
+        }
+
+        // valida a data do exame
+        const dataExameObj = new Date(dataExame);
+        if (isNaN(dataExameObj.getTime())) {
+            return res.status(400).json({
+                error: 'formato de data invalido'
+            });
         }
 
         // atualiza o exame
@@ -1943,7 +2436,7 @@ app.put('/exames/:id', authenticateToken, async (req, res) => {
 
         const updatedExame = result.rows[0];
 
-        // renomeia campos para corresponder à aplicação
+        // mapeamento para o formato que a app espera
         const exameResponse = {
             id: updatedExame.id,
             animalid: updatedExame.animalid,
@@ -1960,42 +2453,55 @@ app.put('/exames/:id', authenticateToken, async (req, res) => {
             dataregisto: updatedExame.dataregisto
         };
 
-        console.log(`Exame ID ${id} atualizado por utilizador ${userId}`);
+        console.log(`exame ${id} atualizado por utilizador ${userId}`);
 
+        // CORRECAO: enviar o objeto mapeado
         res.status(200).json({
             success: true,
-            message: 'Exame atualizado com sucesso',
-            exame: result.rows[0]
+            message: 'exame atualizado com sucesso',
+            exame: exameResponse
         });
 
     } catch (error) {
-        console.error('Erro ao atualizar exame:', error);
+        console.error('erro ao atualizar exame:', error);
         res.status(500).json({
-            error: 'Erro no servidor',
+            error: 'erro no servidor',
             details: error.message
         });
     }
 });
 
-// GET /animais/:animalId/exames -> obtém exames de um animal
+// GET /animais/:animalId/exames -> obtem exames de um animal 
 app.get('/animais/:animalId/exames', authenticateToken, async (req, res) => {
     try {
         const { animalId } = req.params;
         const userId = req.user.id;
 
-        // Verifica permissões
+        // verifica permissoes - o animal pertence ao utilizador
         const animalCheck = await pool.query(
-            'SELECT id FROM animais WHERE id = $1 AND tutorId = $2',
+            'SELECT id, nome FROM animais WHERE id = $1 AND tutorId = $2',
             [animalId, userId]
         );
+        
         if (animalCheck.rows.length === 0) {
-            return res.status(403).json({ error: 'Não autorizado' });
+            return res.status(403).json({ 
+                error: 'nao autorizado ou animal nao encontrado' 
+            });
         }
 
-        // Obtém exames
+        // query para obter exames com todos os dados relacionados
         const result = await pool.query(`
             SELECT 
-                e.*,
+                e.id,
+                e.animalid,
+                e.tipo_exame_id,
+                e.dataexame,
+                e.clinicaid,
+                e.veterinarioid,
+                e.resultado,
+                e.observacoes,
+                e.fotourl,
+                e.dataregisto,
                 te.nome as tipo_nome,
                 te.descricao as tipo_descricao,
                 c.nome as clinicanome,
@@ -2005,35 +2511,42 @@ app.get('/animais/:animalId/exames', authenticateToken, async (req, res) => {
             LEFT JOIN clinicas c ON e.clinicaId = c.id
             LEFT JOIN veterinarios v ON e.veterinarioId = v.id
             WHERE e.animalId = $1
-            ORDER BY e.dataExame DESC
+            ORDER BY e.dataExame DESC, e.dataregisto DESC
         `, [animalId]);
 
-        // transforma os resultados para corresponder à aplicação
+        // mapeamento para o formato que a app espera
         const examesFormatados = result.rows.map(exame => ({
             id: exame.id,
             animalid: exame.animalid,
             tipo_exame_id: exame.tipo_exame_id,
             tipo_nome: exame.tipo_nome,
+            tipo_descricao: exame.tipo_descricao,
             dataexame: exame.dataexame,
             clinicaid: exame.clinicaid,
-            clinicanome: exame.clinica_nome,
+            clinicanome: exame.clinicanome,
             veterinarioid: exame.veterinarioid,
-            veterinarionome: exame.veterinario_nome,
+            veterinarionome: exame.veterinarionome,
             resultado: exame.resultado,
             observacoes: exame.observacoes,
             fotourl: exame.fotourl,
             dataregisto: exame.dataregisto
         }));
 
+        console.log(`utilizador ${userId} acedeu a ${examesFormatados.length} exames do animal ${animalId}`);
+
+        // CORRECAO: enviar o array mapeado
         res.status(200).json({
             success: true,
-            exames: result.rows,
-            count: result.rows.length
+            exames: examesFormatados,
+            count: examesFormatados.length
         });
 
     } catch (error) {
-        console.error('Erro ao obter exames:', error);
-        res.status(500).json({ error: 'Erro no servidor' });
+        console.error('erro ao obter exames:', error);
+        res.status(500).json({ 
+            error: 'erro no servidor',
+            details: error.message 
+        });
     }
 });
 
@@ -2103,74 +2616,81 @@ app.delete('/exames/:id', authenticateToken, async (req, res) => {
 // ROTA PRINCIPAL==============================================
 app.get('/', async (req, res) => {
     try {
-        const [usersCount, animaisCount, consultasCount] = await Promise.all([
+        const [usersCount, animaisCount, consultasCount, vacinasCount, examesCount] = await Promise.all([
             pool.query('SELECT COUNT(*) FROM users'),
             pool.query('SELECT COUNT(*) FROM animais'),
-            pool.query('SELECT COUNT(*) FROM consultas')
+            pool.query('SELECT COUNT(*) FROM consultas'),
+            pool.query('SELECT COUNT(*) FROM vacinas'),
+            pool.query('SELECT COUNT(*) FROM exames')
         ]);
 
         res.json({
-            // status da API
             api_status: 'online',
-            message: 'API VetConnect está a funcionar',
+            message: 'API VetConnect esta a funcionar',
             database: 'PostgreSQL conectada',
 
             stats: {
                 utilizadores: parseInt(usersCount.rows[0].count),
                 animais: parseInt(animaisCount.rows[0].count),
-                consultas: parseInt(consultasCount.rows[0].count)
+                consultas: parseInt(consultasCount.rows[0].count),
+                vacinas: parseInt(vacinasCount.rows[0].count),
+                exames: parseInt(examesCount.rows[0].count)
             },
 
-            // endpoints disponíveis
             endpoints: {
                 auth: {
                     criar: 'POST /utilizadores',
                     verificar: 'POST /utilizadores/verificar',
-                    criarPin: 'POST /utilizadores/criar-pin',
+                    criar_pin: 'POST /utilizadores/criar-pin',
                     login: 'POST /utilizadores/login',
-                    alterarPin: 'POST /utilizadores/alterar-pin',
+                    alterar_pin: 'POST /utilizadores/alterar-pin',
                     logout: 'POST /utilizadores/logout',
-                    recuperarPin: 'POST /utilizadores/recuperar-pin',
-                    redefinirPin: 'POST /utilizadores/redefinir-pin'
+                    recuperar_pin: 'POST /utilizadores/recuperar-pin',
+                    redefinir_pin: 'POST /utilizadores/redefinir-pin'
                 },
-                dados: {
-                    utilizadores: 'GET /utilizadores',
-                    utilizador_id: 'GET /utilizadores/:id',
+                utilizadores: {
+                    listar: 'GET /utilizadores',
+                    obter: 'GET /utilizadores/:id',
                     atualizar: 'PUT /utilizadores/:id',
                     eliminar: 'DELETE /utilizadores/:id'
                 },
-                consultas: {
-                    clinicas: 'GET /clinicas',
-                    veterinarios: 'GET /veterinarios',
-                    veterinarios_clinica: 'GET /clinicas/:clinicaId/veterinarios',
-                    marcar_consulta: 'POST /consultas',
-                    consultas_utilizador: 'GET /consultas/user/:userId',
-                    cancelar_consulta: 'DELETE /consultas/:id'
-                },
                 animais: {
-                    animais: 'POST /animais',
-                    animais_utilizador: 'GET /utilizadores/:userId/animais',
-                    animal_id: 'GET /animais/:animalId',
-                    atualizar_animal: 'PUT /animais/:id',
+                    criar: 'POST /animais',
+                    listar_do_tutor: 'GET /utilizadores/:userId/animais',
+                    obter: 'GET /animais/:animalId',
+                    atualizar: 'PUT /animais/:id',
                     upload_foto: 'POST /animais/:animalId/foto'
                 },
+                clinicas: {
+                    listar: 'GET /clinicas'
+                },
+                veterinarios: {
+                    listar: 'GET /veterinarios',
+                    listar_por_clinica: 'GET /clinicas/:clinicaId/veterinarios'
+                },
+                consultas: {
+                    marcar: 'POST /consultas',
+                    listar_do_utilizador: 'GET /consultas/user/:userId',
+                    atualizar: 'PUT /consultas/:id',
+                    cancelar: 'DELETE /consultas/:id'
+                },
                 vacinas: {
-                    vacinas: 'GET /vacinas',
-                    vacinas_proximas: 'GET /vacinas/proximas',
-                    atualizar_vacina: 'PUT /vacinas/:id',
-                    cancelar_vacina: 'DELETE /vacinas/:id',
-                    tipos_vacinas: 'GET /vacinas/tipos',
-                    agendar_vacina: 'POST /vacinas/agendar',
-                    vacinas_agendadas_animal: 'GET /animais/:animalId/vacinas/agendadas',
-                    marcar_realizada: 'POST /vacinas/:id/realizada'
+                    tipos: 'GET /vacinas/tipos',
+                    listar: 'GET /vacinas',
+                    proximas: 'GET /vacinas/proximas',
+                    agendar: 'POST /vacinas/agendar',
+                    atualizar: 'PUT /vacinas/:id',
+                    cancelar: 'DELETE /vacinas/:id',
+                    marcar_realizada: 'POST /vacinas/:id/realizada',
+                    listar_agendadas_animal: 'GET /animais/:animalId/vacinas/agendadas'
                 },
                 exames: {
-                    tipos_exames: 'GET /exames/tipos',
-                    criar_exame: 'POST /exames',
-                    upload_foto_exame: 'POST /exames/:exameId/foto',
-                    exames_animal: 'GET /animais/:animalId/exames',
-                    atualizar_exame: 'PUT /exames/:id',
-                    apagar_exame: 'DELETE /exames/:id'
+                    tipos: 'GET /exames/tipos',
+                    criar: 'POST /exames',
+                    listar_do_animal: 'GET /animais/:animalId/exames',
+                    atualizar: 'PUT /exames/:id',
+                    apagar: 'DELETE /exames/:id',
+                    upload_foto: 'POST /exames/:id/foto'
                 }
             },
 

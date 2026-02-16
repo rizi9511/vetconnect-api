@@ -306,11 +306,11 @@ async function seedDatabase() {
 
 // MIDDLEWARE DE DEBUG
 app.use((req, res, next) => {
-    // Verificar se debug está ativo
+    // Verificar se debug está ativo -> ?debug=true na URL, ignora autenticação
     if (process.env.DEBUG_MODE === 'true' && req.query.debug === 'true') {
-        console.log(`🔧 DEBUG ATIVADO: ${req.method} ${req.path}`);
+        console.log(`Debug ativado: ${req.method} ${req.path}`);
         
-        // Criar user fake
+        // Cria user fake
         req.user = { 
             id: 999, 
             email: 'debug@teste.com',
@@ -322,24 +322,18 @@ app.use((req, res, next) => {
         const originalJson = res.json;
         res.json = function(data) {
             if (data && typeof data === 'object') {
-                data.aviso = '🔧 Modo debug ativo - Dados reais';
+                data.aviso = 'Modo debug ativo';
             }
             return originalJson.call(this, data);
         };
         
-        return next(); // Continuar para as rotas
+        return next(); // Continua para as rotas
     }
     next();
 });
 
 // MIDDLEWARE DE AUTENTICAÇÃO
 function authenticateToken(req, res, next) {
-    // Se já tem user do debug, nem precisa verificar token
-    if (req.user && req.user.id === 999) {
-        console.log('🔧 Debug mode: a ignorar autenticação');
-        return next();
-    }
-    
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
 
@@ -347,18 +341,20 @@ function authenticateToken(req, res, next) {
         return res.status(401).json({ error: 'Token de autenticação necessário' });
     }
 
-    // ... resto da sua lógica de verificação de token
+    // Verificar primeiro se está na blacklist
     pool.query('SELECT * FROM invalidated_tokens WHERE token = $1', [token])
         .then(result => {
             if (result.rows.length > 0) {
                 return res.status(403).json({ error: 'Token revogado. Faça login novamente.' });
             }
 
+            // Se não está na blacklist, verificar normalmente
             jwt.verify(token, process.env.JWT_SECRET || 'dev_secret', (err, user) => {
                 if (err) {
                     return res.status(403).json({ error: 'Token inválido ou expirado' });
                 }
 
+                // Anexar token ao request para uso posterior
                 req.token = token;
                 req.user = user;
                 next();
@@ -369,6 +365,7 @@ function authenticateToken(req, res, next) {
             return res.status(500).json({ error: 'Erro interno do servidor' });
         });
 }
+
 
 
 

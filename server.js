@@ -309,7 +309,7 @@ async function seedDatabase() {
 app.use((req, res, next) => {
     // Verificar se debug está ativo -> ?debug=true na URL, ignora autenticação
     if (process.env.DEBUG_MODE === 'true' && req.query.debug === 'true') {
-        console.log(`🔧 DEBUG ATIVADO: ${req.method} ${req.path}`);
+        console.log(`DEBUG ATIVADO: ${req.method} ${req.path}`);
         
         // Cria user fake com poderes de veterinário
         req.user = { 
@@ -325,7 +325,7 @@ app.use((req, res, next) => {
         // Interceptar a resposta para adicionar aviso
         res.json = function(data) {
             if (data && typeof data === 'object') {
-                data.aviso = '🔧 Modo debug ativo';
+                data.aviso = 'Modo debug ativo';
             }
             return originalJson.call(this, data);
         };
@@ -339,7 +339,7 @@ app.use((req, res, next) => {
 function authenticateToken(req, res, next) {
     // SE JÁ TEM USER DO DEBUG (ID 999), PASSA DIRETO SEM VERIFICAR TOKEN
     if (req.user && req.user.id === 999) {
-        console.log(`🔧 DEBUG: a ignorar autenticação para ${req.path}`);
+        console.log(`DEBUG: a ignorar autenticação para ${req.path}`);
         return next();
     }
     

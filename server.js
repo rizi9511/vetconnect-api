@@ -309,21 +309,23 @@ async function seedDatabase() {
 app.use((req, res, next) => {
     // Verificar se debug está ativo -> ?debug=true na URL, ignora autenticação
     if (process.env.DEBUG_MODE === 'true' && req.query.debug === 'true') {
-        console.log(`Debug ativado: ${req.method} ${req.path}`);
+        console.log(`🔧 DEBUG ATIVADO: ${req.method} ${req.path}`);
         
-        // Cria user fake
+        // Cria user fake com poderes de veterinário
         req.user = { 
             id: 999, 
             email: 'debug@teste.com',
-            tipo: 'veterinario'
+            tipo: 'veterinario'  // Veterinário vê tudo
         };
         req.token = 'debug-token';
         
-        // Adicionar aviso
+        // Guardar referência para o método original
         const originalJson = res.json;
+        
+        // Interceptar a resposta para adicionar aviso
         res.json = function(data) {
             if (data && typeof data === 'object') {
-                data.aviso = 'Modo debug ativo';
+                data.aviso = '🔧 Modo debug ativo';
             }
             return originalJson.call(this, data);
         };
@@ -333,8 +335,14 @@ app.use((req, res, next) => {
     next();
 });
 
-// MIDDLEWARE DE AUTENTICAÇÃO
+// MIDDLEWARE DE AUTENTICAÇÃO 
 function authenticateToken(req, res, next) {
+    // SE JÁ TEM USER DO DEBUG (ID 999), PASSA DIRETO SEM VERIFICAR TOKEN
+    if (req.user && req.user.id === 999) {
+        console.log(`🔧 DEBUG: a ignorar autenticação para ${req.path}`);
+        return next();
+    }
+    
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
 

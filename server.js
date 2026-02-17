@@ -303,6 +303,7 @@ async function seedDatabase() {
 
 
 // MIDDLEWARE==============================================
+//ALTERAÇÃO APÓS ENTREGA (TROCA DAS ROTAS)
 
 // MIDDLEWARE DE DEBUG
 app.use((req, res, next) => {
